@@ -1,0 +1,262 @@
+{
+  "mode": "isolated same-mock real-socket SDK benchmark; no paid calls",
+  "rounds": 10,
+  "workload": "back-to-back rounds, settlements overlap",
+  "steady_10_rps": false,
+  "warmup_requests_per_path": 50,
+  "content_bytes": 5,
+  "source_root": "/home/lenovo/707/deepseek-token-api",
+  "results": [
+    {
+      "scenario": "same_member",
+      "concurrency": 1,
+      "target": "direct",
+      "requests": 10,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 25.27,
+      "ttft_p95_ms": 26.89,
+      "total_p95_ms": 69.44
+    },
+    {
+      "scenario": "same_member",
+      "concurrency": 1,
+      "target": "gateway",
+      "requests": 10,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 44.64,
+      "ttft_p95_ms": 57.82,
+      "total_p95_ms": 97.91,
+      "admission_p95_ms": 28,
+      "settlement_drain_p95_ms": null
+    },
+    {
+      "scenario": "same_member",
+      "concurrency": 10,
+      "target": "direct",
+      "requests": 100,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 30.65,
+      "ttft_p95_ms": 40.08,
+      "total_p95_ms": 87.85
+    },
+    {
+      "scenario": "same_member",
+      "concurrency": 10,
+      "target": "gateway",
+      "requests": 100,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 72.5,
+      "ttft_p95_ms": 93.11,
+      "total_p95_ms": 146.28,
+      "admission_p95_ms": 39,
+      "settlement_drain_p95_ms": null
+    },
+    {
+      "scenario": "same_member",
+      "concurrency": 30,
+      "target": "direct",
+      "requests": 300,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 41.72,
+      "ttft_p95_ms": 61.24,
+      "total_p95_ms": 107.96
+    },
+    {
+      "scenario": "same_member",
+      "concurrency": 30,
+      "target": "gateway",
+      "requests": 300,
+      "errors": 29,
+      "error_types": {
+        "RateLimitError:429": 29
+      },
+      "ttft_p50_ms": 103.6,
+      "ttft_p95_ms": 178.13,
+      "total_p95_ms": 219.2,
+      "admission_p95_ms": 112,
+      "settlement_drain_p95_ms": null
+    },
+    {
+      "scenario": "same_team",
+      "concurrency": 1,
+      "target": "direct",
+      "requests": 10,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 25.18,
+      "ttft_p95_ms": 27.96,
+      "total_p95_ms": 69.52
+    },
+    {
+      "scenario": "same_team",
+      "concurrency": 1,
+      "target": "gateway",
+      "requests": 10,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 47.17,
+      "ttft_p95_ms": 61.77,
+      "total_p95_ms": 104.49,
+      "admission_p95_ms": 30,
+      "settlement_drain_p95_ms": null
+    },
+    {
+      "scenario": "same_team",
+      "concurrency": 10,
+      "target": "direct",
+      "requests": 100,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 30.9,
+      "ttft_p95_ms": 50.61,
+      "total_p95_ms": 99.62
+    },
+    {
+      "scenario": "same_team",
+      "concurrency": 10,
+      "target": "gateway",
+      "requests": 100,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 63.45,
+      "ttft_p95_ms": 87.29,
+      "total_p95_ms": 138.27,
+      "admission_p95_ms": 38,
+      "settlement_drain_p95_ms": null
+    },
+    {
+      "scenario": "same_team",
+      "concurrency": 30,
+      "target": "direct",
+      "requests": 300,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 42.12,
+      "ttft_p95_ms": 49.12,
+      "total_p95_ms": 95.91
+    },
+    {
+      "scenario": "same_team",
+      "concurrency": 30,
+      "target": "gateway",
+      "requests": 300,
+      "errors": 49,
+      "error_types": {
+        "RateLimitError:429": 49
+      },
+      "ttft_p50_ms": 113.48,
+      "ttft_p95_ms": 152.6,
+      "total_p95_ms": 205.14,
+      "admission_p95_ms": 51,
+      "settlement_drain_p95_ms": null
+    },
+    {
+      "scenario": "three_teams",
+      "concurrency": 1,
+      "target": "direct",
+      "requests": 10,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 24.88,
+      "ttft_p95_ms": 26.16,
+      "total_p95_ms": 67.75
+    },
+    {
+      "scenario": "three_teams",
+      "concurrency": 1,
+      "target": "gateway",
+      "requests": 10,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 51.48,
+      "ttft_p95_ms": 57.69,
+      "total_p95_ms": 100.07,
+      "admission_p95_ms": 26,
+      "settlement_drain_p95_ms": null
+    },
+    {
+      "scenario": "three_teams",
+      "concurrency": 10,
+      "target": "direct",
+      "requests": 100,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 29.68,
+      "ttft_p95_ms": 34.03,
+      "total_p95_ms": 80.71
+    },
+    {
+      "scenario": "three_teams",
+      "concurrency": 10,
+      "target": "gateway",
+      "requests": 100,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 81.06,
+      "ttft_p95_ms": 120.65,
+      "total_p95_ms": 160.25,
+      "admission_p95_ms": 66,
+      "settlement_drain_p95_ms": null
+    },
+    {
+      "scenario": "three_teams",
+      "concurrency": 30,
+      "target": "direct",
+      "requests": 300,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 41.83,
+      "ttft_p95_ms": 51.79,
+      "total_p95_ms": 99.28
+    },
+    {
+      "scenario": "three_teams",
+      "concurrency": 30,
+      "target": "gateway",
+      "requests": 300,
+      "errors": 0,
+      "error_types": {},
+      "ttft_p50_ms": 147.36,
+      "ttft_p95_ms": 188.07,
+      "total_p95_ms": 239.17,
+      "admission_p95_ms": 117,
+      "settlement_drain_p95_ms": null
+    }
+  ],
+  "gateway_metrics": {
+    "requests": 1337,
+    "rejections": {
+      "concurrency_limit": 78
+    },
+    "upstream_errors": 0,
+    "database_failures": 0,
+    "settlement_failures": 0,
+    "admission_batches": {
+      "batches": 127,
+      "requests": 1280,
+      "max_batch_size": 30,
+      "cleanup_failures": 0
+    },
+    "admission_queue": 0,
+    "current_concurrency": 0,
+    "pending_requests": 0,
+    "pending_micro_cny": 0
+  },
+  "accounting": {
+    "calls": 1202,
+    "settled": 1202,
+    "reserved": 0,
+    "ledger": 4808
+  },
+  "notes": [
+    "Warm samples only; each concurrency=1 case has rounds samples.",
+    "Difference of p95 values is not a paired per-request overhead quantile.",
+    "Original code admission_ms excludes commit; optimized code includes it."
+  ],
+  "temporary_database_removed": true
+}

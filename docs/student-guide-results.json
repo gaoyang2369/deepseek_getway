@@ -1,0 +1,40 @@
+{
+  "date": "2026-11-14",
+  "tests_passed": 57,
+  "mock_runtime_examples": [
+    "Python SDK",
+    "curl models",
+    "curl chat",
+    "Agent tool-call round trip"
+  ],
+  "node_example": "syntax checked",
+  "harness_config": "checked against official provider and compatibility docs; full Harness app not end-to-end tested",
+  "browser_checks": [
+    "project/model selection",
+    "output caps",
+    "one-time key privacy",
+    "HTTP clipboard fallback",
+    "desktop/mobile layout",
+    "live static assets and six tabs"
+  ],
+  "live_check_uses_browser_local_profile_fixture": true,
+  "live_page_errors": [],
+  "live_mutations": 0,
+  "live_model_calls": 0,
+  "all_existing_records_unchanged": true,
+  "preserved": {
+    "teams": 6,
+    "students": 9,
+    "memberships": 10,
+    "personal_keys": 9,
+    "credentials": 6,
+    "calls": 169,
+    "budget_periods": 2,
+    "ledger": 662,
+    "prices": 1,
+    "events": 16,
+    "operations": 12,
+    "student_accounts": 5
+  },
+  "student_logins_added": 0
+}

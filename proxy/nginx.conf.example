@@ -1,0 +1,37 @@
+# Integrate into the existing HTTPS proxy only after domain/network approval.
+# The present server already uses 80/443. Do not install this over that service.
+server {
+    listen 443 ssl;
+    server_name YOUR-LAB-DOMAIN;
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 256k;
+    # Do not log query strings, credentials or bodies.
+    access_log off;
+    location = /v1/models {
+        proxy_pass http://127.0.0.1:18081;
+        include /etc/nginx/lab-gateway-headers.conf;
+    }
+    location = /v1/chat/completions {
+        proxy_pass http://127.0.0.1:18081;
+        include /etc/nginx/lab-gateway-headers.conf;
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+        proxy_read_timeout 240s;
+        proxy_send_timeout 240s;
+    }
+    location /admin {
+        # Replace with actual approved campus/VPN/admin networks, then remove deny all.
+        deny all;
+        proxy_pass http://127.0.0.1:18081;
+        include /etc/nginx/lab-gateway-headers.conf;
+    }
+    location = / { return 302 /student; }
+    location /student {
+        proxy_pass http://127.0.0.1:18081;
+        include /etc/nginx/lab-gateway-headers.conf;
+    }
+    location / { return 404; }
+}

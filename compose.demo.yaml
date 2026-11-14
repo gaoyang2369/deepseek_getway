@@ -1,0 +1,10 @@
+services:
+  mock:
+    image: lab-llm-gateway:0.1.0
+    command: [uvicorn, scripts.mock_upstream:app, --host, 0.0.0.0, --port, '8080', --no-access-log]
+    volumes: ["./scripts:/app/scripts:ro"]
+    networks: [backend]
+    restart: unless-stopped
+  gateway:
+    depends_on:
+      mock: {condition: service_started}

@@ -1,0 +1,7 @@
+*
+!requirements.lock
+!gateway/**
+!migrations/**
+!alembic.ini
+**/__pycache__/
+**/*.pyc

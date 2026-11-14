@@ -1,0 +1,10 @@
+{
+  "base_url": "http://10.108.13.250:18081",
+  "browser": "Chromium",
+  "roster_form": "passed",
+  "forced_password_change": "passed",
+  "key_issue_once_and_rotation": "passed",
+  "admin_reset_and_session_key_revocation": "passed",
+  "page_errors": [],
+  "paid_calls": 0
+}

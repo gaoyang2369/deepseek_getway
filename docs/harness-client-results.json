@@ -1,0 +1,15 @@
+{
+  "checks": [
+    {
+      "effort": "max",
+      "stopReason": "stop",
+      "outputTokens": 20
+    },
+    {
+      "effort": "xhigh",
+      "stopReason": "stop",
+      "outputTokens": 20
+    }
+  ],
+  "dependency": "@earendil-works/pi-ai@1.3.0"
+}

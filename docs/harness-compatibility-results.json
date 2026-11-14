@@ -1,0 +1,72 @@
+{
+  "date": "2026-11-14",
+  "tests_passed": 78,
+  "upstream": "https://api.deepseek.com/v1",
+  "real_checks": [
+    {
+      "mode": "non_stream",
+      "status": 200,
+      "request_id": "286dbf2a-b5f7-4c62-938e-a2f45844c17e",
+      "text": "连接成功",
+      "usage": {
+        "completion_tokens": 2,
+        "prompt_tokens": 22,
+        "total_tokens": 24,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 22
+      }
+    },
+    {
+      "requestId": "29b62edc-dbcc-4fd6-bcf5-8fc145438b40",
+      "fields": {
+        "instructionRole": "developer",
+        "store": false,
+        "maxCompletionTokens": 64,
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "stopReason": "stop",
+      "text": "连接成功",
+      "inputTokens": 22,
+      "outputTokens": 2
+    }
+  ],
+  "real_generation_requests": 2,
+  "per_request_output_limit": 64,
+  "dependency": "@earendil-works/pi-ai@1.3.0",
+  "harness_full_application_e2e": false,
+  "preservation_before_real_calls": {
+    "all_existing_records_unchanged": true,
+    "preserved": {
+      "teams": 6,
+      "students": 9,
+      "memberships": 10,
+      "personal_keys": 9,
+      "credentials": 6,
+      "calls": 169,
+      "budget_periods": 2,
+      "ledger": 662,
+      "prices": 3,
+      "events": 17,
+      "operations": 12,
+      "student_accounts": 5
+    },
+    "student_logins_added": 0
+  },
+  "settlement": {
+    "statuses": [
+      "settled",
+      "settled"
+    ],
+    "cost_micro_cny": [
+      60,
+      60
+    ],
+    "total_estimated_cny": "0.000120",
+    "requests_in_progress": 0
+  }
+}

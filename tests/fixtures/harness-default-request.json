@@ -1,0 +1,20 @@
+{
+  "model": "deepseek-flash",
+  "messages": [
+    {
+      "role": "developer",
+      "content": "测试系统指令"
+    },
+    {
+      "role": "user",
+      "content": "你好"
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "store": false,
+  "max_completion_tokens": 128000,
+  "reasoning_effort": "max"
+}
