@@ -3,16 +3,16 @@
 import io
 import json
 import os
-import subprocess
-import sys
 import tarfile
 import tempfile
 from pathlib import Path
 
-from backup import ROOT, decrypt, key_bytes
+from backup import ROOT, create_backup, decrypt, key_bytes
+from support import artifact
 
-subprocess.run([sys.executable, str(ROOT / "scripts/backup.py"), "--secrets"], check=True)
-backup = max((ROOT / "backups").glob("*-secrets.enc"), key=lambda p: p.stat().st_mtime)
+backup = create_backup(
+    key_file=ROOT / "secrets/backup_key", directory=artifact("restore"), include_secrets=True
+)
 plain = io.BytesIO()
 with backup.open("rb") as source:
     decrypt(source, plain, key_bytes(ROOT / "secrets/backup_key"))
@@ -45,5 +45,5 @@ report = {
     "backup_decryption_key_excluded": True,
     "destination": "temporary restricted directory, removed after check",
 }
-(ROOT / "docs/secrets-restore-results.json").write_text(json.dumps(report, indent=2) + "\n")
+artifact("secrets-restore-results.json").write_text(json.dumps(report, indent=2) + "\n")
 print(json.dumps(report))

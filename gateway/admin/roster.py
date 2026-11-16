@@ -1,14 +1,9 @@
-"""Administrator-only roster import and verified-identity password reset."""
-
-import secrets
-
-import anyio
-from argon2 import PasswordHasher
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from sqlalchemy import delete, select, text, update
 
-from .admin import audit, operation, remove_memberships, require_admin
-from .models import (
+from ..accounts import create_membership, prepare_password, remove_memberships
+from ..keys import issue
+from ..models import (
     Membership,
     Operation,
     PersonalKey,
@@ -18,10 +13,143 @@ from .models import (
     Team,
     now,
 )
-from .schemas import PasswordReset, StudentImport
-from .security import fail
+from ..operations import audit, operation
+from ..schemas import (
+    Enroll,
+    PasswordReset,
+    StudentImport,
+)
+from ..security import fail
 
-router = APIRouter(prefix="/admin/api", dependencies=[Depends(require_admin)])
+router = APIRouter()
+
+
+@router.post("/enroll", status_code=201)
+async def enroll(data: Enroll, request: Request):
+    if data.expires_at and data.expires_at <= now():
+        fail(400, "expiry_in_past")
+    mode = data.initial_password_mode or (
+        "random" if request.app.state.settings.production else "student_number"
+    )
+    if data.kind == "student" and request.app.state.settings.production and mode == "student_number":
+        fail(400, "production_requires_random_initial_password")
+    initial, encoded = (
+        await prepare_password(data.student_number, mode) if data.kind == "student" else (None, None)
+    )
+    async with request.app.state.db() as db, db.begin():
+        previous, fingerprint = await operation(
+            db, data.operation_id, {"action": "enroll", **data.model_dump()}
+        )
+        if previous:
+            return {**previous.result, "replayed": True, "key": None, "temporary_password": None}
+        team = await db.scalar(select(Team).where(Team.id == data.team_id).with_for_update(key_share=True))
+        if not team or not team.active:
+            fail(400, "team_unavailable")
+        if not set(data.models).issubset(team.models):
+            fail(400, "models_outside_team")
+        if data.kind == "service" and not data.owner:
+            fail(400, "service_owner_required")
+        # Cross-team creation of the same student is serialized on the unique business identity.
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:id, 1))"), {"id": data.student_number}
+        )
+        student = await db.scalar(
+            select(Student).where(Student.student_number == data.student_number, Student.deleted_at.is_(None))
+        )
+        if student and (
+            not student.active
+            or student.name != data.name
+            or student.kind != data.kind
+            or student.owner != data.owner
+        ):
+            fail(409, "student_identity_conflict")
+        if not student:
+            student = Student(
+                name=data.name, student_number=data.student_number, kind=data.kind, owner=data.owner
+            )
+            db.add(student)
+            await db.flush()
+        existing = await db.scalar(
+            select(Membership).where(
+                Membership.student_id == student.id,
+                Membership.team_id == team.id,
+                Membership.deleted_at.is_(None),
+            )
+        )
+        if existing:
+            fail(409, "membership_exists_use_key_issue")
+        member = await create_membership(
+            db, student.id, team.id, data, rpm=data.rpm, concurrency=data.concurrency
+        )
+        account_created = False
+        key, raw = None, None
+        if data.kind == "student":
+            if await db.get(StudentAccount, student.id) is None:
+                db.add(StudentAccount(student_id=student.id, password_hash=encoded))
+                account_created = True
+        else:
+            key, raw = issue(db, request.app, member, data.models, data.expires_at)
+        result = {
+            "student_id": student.id,
+            "membership_id": member.id,
+            "key_id": key.id if key else None,
+            "prefix": key.prefix if key else None,
+            "base_url": request.app.state.settings.public_url + "/v1",
+            "student_url": request.app.state.settings.public_url + "/student"
+            if data.kind == "student"
+            else None,
+            "account_created": account_created,
+            "initial_password_mode": mode if data.kind == "student" else None,
+        }
+        db.add(Operation(id=data.operation_id, fingerprint=fingerprint, result=result))
+        audit(
+            db,
+            request,
+            "enroll",
+            member.id,
+            {"student_id": student.id, "team_id": team.id, "budget": data.budget},
+        )
+        return {
+            **result,
+            "key": raw,
+            "replayed": False,
+            "temporary_password": initial if account_created and mode == "random" else None,
+        }
+
+
+@router.get("/memberships")
+async def memberships(request: Request, include_deleted: bool = False):
+    async with request.app.state.db() as db:
+        query = (
+            select(Membership, Student, Team)
+            .join(Student, Student.id == Membership.student_id)
+            .join(Team, Team.id == Membership.team_id)
+            .order_by(Student.student_number)
+        )
+        if not include_deleted:
+            query = query.where(
+                Membership.deleted_at.is_(None), Student.deleted_at.is_(None), Team.deleted_at.is_(None)
+            )
+        rows = (await db.execute(query)).all()
+        return [
+            {
+                "id": m.id,
+                "student_id": s.id,
+                "name": s.name,
+                "student_number": s.student_number,
+                "team_id": t.id,
+                "team": t.name,
+                "active": m.active,
+                "budget": m.budget,
+                "period": m.period,
+                "models": m.models,
+                "kind": s.kind,
+                "owner": s.owner,
+                "key_expires_at": m.key_expires_at,
+                "deleted_at": m.deleted_at or s.deleted_at or t.deleted_at,
+            }
+            for m, s, t in rows
+        ]
 
 
 @router.get("/students")
@@ -128,13 +256,9 @@ async def import_students(data: StudentImport, request: Request):
     prepared = {}
     for item in data.students:
         if item.student_number not in existing:
-            initial = (
-                item.student_number
-                if data.initial_password_mode == "student_number"
-                else secrets.token_urlsafe(24)
+            prepared[item.student_number] = await prepare_password(
+                item.student_number, data.initial_password_mode
             )
-            encoded = await anyio.to_thread.run_sync(PasswordHasher().hash, initial)
-            prepared[item.student_number] = (initial, encoded)
     # Recheck idempotency, permissions and account existence after preparation.
     async with request.app.state.db() as db, db.begin():
         previous, fingerprint = await operation(
@@ -181,16 +305,7 @@ async def import_students(data: StudentImport, request: Request):
                 )
             )
             if not member:
-                member = Membership(
-                    student_id=student.id,
-                    team_id=team.id,
-                    budget=data.budget,
-                    period=data.period,
-                    models=data.models,
-                    key_expires_at=data.expires_at,
-                )
-                db.add(member)
-                await db.flush()
+                member = await create_membership(db, student.id, team.id, data)
             created = await db.get(StudentAccount, student.id) is None
             if created:
                 if item.student_number not in prepared:
@@ -224,8 +339,7 @@ async def import_students(data: StudentImport, request: Request):
 
 @router.post("/students/{student_id}/reset-password")
 async def reset_password(student_id: str, data: PasswordReset, request: Request):
-    temporary = secrets.token_urlsafe(24)
-    encoded = await anyio.to_thread.run_sync(PasswordHasher().hash, temporary)
+    temporary, encoded = await prepare_password(student_id, "random")
     async with request.app.state.db() as db, db.begin():
         await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:id, 2))"), {"id": student_id})
         student = await db.get(Student, student_id)

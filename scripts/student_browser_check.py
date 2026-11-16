@@ -2,45 +2,39 @@
 
 import asyncio
 import json
+import os
 import secrets
 import time
-from pathlib import Path
 
 import httpx
 from playwright.async_api import async_playwright
-
-ROOT = Path(__file__).resolve().parents[1]
+from support import admin_password, artifact, mock_identity, test_gateway_url
 
 
 async def main():
-    values = dict(
-        line.split("=", 1)
-        for line in (ROOT / ".env").read_text().splitlines()
-        if "=" in line and not line.startswith("#")
-    )
-    if values.get("GATEWAY_ENV") != "demo" or values.get("UPSTREAM_URL") != "http://mock:8080/v1":
-        raise SystemExit("MOCK environment required")
-    base = values["PUBLIC_URL"]
+    base = test_gateway_url()
+    async with httpx.AsyncClient(base_url=base, trust_env=False) as client:
+        identity = await mock_identity(client)
     number = "99" + str(time.time_ns())[-14:]
     new_password = secrets.token_urlsafe(24)
     page_errors = []
-    browser_path = next(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"))
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            executable_path=str(browser_path), headless=True, args=["--no-sandbox", "--no-proxy-server"]
+            executable_path=os.getenv("GATEWAY_CHROMIUM_PATH"),
+            headless=True,
+            args=["--no-sandbox", "--no-proxy-server"],
         )
         admin_context = await browser.new_context()
         admin = await admin_context.new_page()
         admin.on("pageerror", lambda e: page_errors.append(type(e).__name__))
         admin.on("dialog", lambda d: d.accept())
         await admin.goto(base + "/admin")
-        await admin.locator('input[name="password"]').fill(
-            (ROOT / "secrets/demo_admin_password").read_text().strip()
-        )
+        await admin.locator('input[name="password"]').fill(admin_password())
         await admin.locator("#login button").click()
         await admin.locator("#console").wait_for(state="visible")
         await admin.locator('nav button[data-view="students"]').click()
         await admin.get_by_role("button", name="＋ 批量导入学号").click()
+        await admin.locator('select[name="team_id"]').select_option(identity["team_id"])
         await admin.locator('textarea[name="roster"]').fill(number + ",浏览器模拟同学")
         await admin.locator('select[name="initial_password_mode"]').select_option("student_number")
         async with admin.expect_response(lambda r: r.url.endswith("/students/import")) as imported:
@@ -75,7 +69,7 @@ async def main():
         new_key = await page.locator("#student-key-value").inner_text()
         assert new_key != old_key
         await page.locator("#student-key-close").click()
-        await page.screenshot(path=str(ROOT / "docs/student-preview.png"), full_page=True)
+        await page.screenshot(path=str(artifact("student-preview.png")), full_page=True)
         async with httpx.AsyncClient(base_url=base, trust_env=False) as client:
             assert (
                 await client.get("/v1/models", headers={"Authorization": "Bearer " + old_key})
@@ -113,7 +107,7 @@ async def main():
         "page_errors": page_errors,
         "paid_calls": 0,
     }
-    (ROOT / "docs/student-browser-results.json").write_text(json.dumps(result, indent=2) + "\n")
+    artifact("student-browser-results.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result))
 
 

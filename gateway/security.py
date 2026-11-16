@@ -35,3 +35,9 @@ def client_ip(request, settings):
         return str(addr)
     except ValueError:
         return peer
+
+
+def check_origin(request):
+    origin = request.headers.get("origin")
+    if origin and origin != request.app.state.settings.public_url:
+        fail(403, "invalid_origin")

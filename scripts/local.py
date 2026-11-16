@@ -13,6 +13,8 @@ for line in (root / ".env").read_text().splitlines():
         env[k] = v
 env["DATABASE_URL"] = env["DATABASE_URL"].replace("@postgres:5432/", "@127.0.0.1:18543/")
 env["REDIS_URL"] = env["REDIS_URL"].replace("@redis:6379/", "@127.0.0.1:18379/")
+env["GATEWAY_COMPOSE_PROJECT"] = os.getenv("GATEWAY_COMPOSE_PROJECT", "lab-gateway-test")
+env["GATEWAY_ENV"] = "demo"
 env["UPSTREAM_URL"] = "http://127.0.0.1:18082/v1"
 for variable, filename in (
     ("ENCRYPTION_KEY", "encryption_key"),

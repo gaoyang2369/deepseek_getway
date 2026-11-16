@@ -23,6 +23,7 @@ import psycopg
 from openai import AsyncOpenAI
 from psycopg import sql
 from redis.asyncio import Redis
+from support import artifact, require_isolated_dependencies
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -82,7 +83,7 @@ async def benchmark(args, env, gateway_port, mock_port):
                 "note": "Isolated latency benchmark MOCK ONLY",
             },
         )
-        people, team_ids = [], []
+        people = []
         for group in range(3):
             team = await post(
                 "/admin/api/teams",
@@ -96,7 +97,6 @@ async def benchmark(args, env, gateway_port, mock_port):
                     "concurrency": 100,
                 },
             )
-            team_ids.append(team["id"])
             members = []
             for number in range(30 if group == 0 else 10):
                 members.append(
@@ -105,6 +105,8 @@ async def benchmark(args, env, gateway_port, mock_port):
                         {
                             "operation_id": str(uuid.uuid4()),
                             "name": "latency mock",
+                            "kind": "service",
+                            "owner": "isolated latency verification",
                             "student_number": f"latency-{group}-{number}",
                             "team_id": team["id"],
                             "models": ["lab-chat"],
@@ -277,6 +279,7 @@ async def benchmark(args, env, gateway_port, mock_port):
 
 
 async def main(args):
+    require_isolated_dependencies()
     env = os.environ.copy()
     assert "@127.0.0.1:18543/" in env["DATABASE_URL"], "Use scripts/local.py with isolated test containers"
     assert env.get("GATEWAY_ENV") == "demo", "MOCK benchmark requires demo mode"
@@ -359,7 +362,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--steady", action="store_true", help="Also test 100 requests at a fixed 10 requests/s"
     )
-    parser.add_argument("--output", type=Path, default=ROOT / "docs/latency-optimized-results.json")
+    parser.add_argument("--output", type=Path, default=artifact("latency-optimized-results.json"))
     args = parser.parse_args()
     assert args.rounds > 0
     asyncio.run(main(args))

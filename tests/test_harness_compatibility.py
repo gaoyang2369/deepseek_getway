@@ -4,15 +4,14 @@ import asyncio
 import json
 import logging
 import os
-import socket
 from pathlib import Path
 
 import httpx
 import pytest
-import uvicorn
 from conftest import price, student, team
 from fastapi import FastAPI, Request
 from sqlalchemy import select
+from support import artifact
 
 from gateway.models import Call
 from gateway.schemas import Chat
@@ -108,41 +107,29 @@ async def test_unsupported_fields_report_safe_paths_without_inputs(admin, app, c
 @pytest.mark.skipif(
     not os.getenv("PI_AI_TEST_ROOT"), reason="Optional Harness dependency check: set PI_AI_TEST_ROOT"
 )
-async def test_actual_harness_dependency_streaming(admin, app):
+async def test_actual_harness_dependency_streaming(admin, app, live_server):
     await price(admin)
     person, _ = await student(admin, await team(admin, max_output=1024))
     requests = await capture_mock_requests(app)
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    base = f"http://127.0.0.1:{sock.getsockname()[1]}/v1"
-    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
-    serving = asyncio.create_task(server.serve(sockets=[sock]))
-    try:
-        while not server.started:
-            await asyncio.sleep(0.01)
-        process = await asyncio.create_subprocess_exec(
-            "node",
-            str(FIXTURES / "harness-client.mjs"),
-            env={
-                **os.environ,
-                "LAB_LLM_BASE_URL": base,
-                "LAB_LLM_API_KEY": person["key"],
-                "NODE_TLS_REJECT_UNAUTHORIZED": "1",
-            },
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
-        assert process.returncode == 0, stderr.decode()
-        result = json.loads(stdout)
-        assert [r["effort"] for r in result["checks"]] == ["max", "xhigh"]
-        assert len(requests) == 2
-        assert all(request["max_tokens"] == 1024 for request in requests)
-        assert [request["reasoning_effort"] for request in requests] == ["max", "high"]
-        assert all(
-            "store" not in request and request["messages"][0]["role"] == "system" for request in requests
-        )
-        Path("docs/harness-client-results.json").write_text(json.dumps(result, indent=2) + "\n")
-    finally:
-        server.should_exit = True
-        await serving
+    base = live_server + "/v1"
+    process = await asyncio.create_subprocess_exec(
+        "node",
+        str(FIXTURES / "harness-client.mjs"),
+        env={
+            **os.environ,
+            "LAB_LLM_BASE_URL": base,
+            "LAB_LLM_API_KEY": person["key"],
+            "NODE_TLS_REJECT_UNAUTHORIZED": "1",
+        },
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
+    assert process.returncode == 0, stderr.decode()
+    result = json.loads(stdout)
+    assert [r["effort"] for r in result["checks"]] == ["max", "xhigh"]
+    assert len(requests) == 2
+    assert all(request["max_tokens"] == 1024 for request in requests)
+    assert [request["reasoning_effort"] for request in requests] == ["max", "high"]
+    assert all("store" not in request and request["messages"][0]["role"] == "system" for request in requests)
+    artifact("harness-client-results.json").write_text(json.dumps(result, indent=2) + "\n")

@@ -1,17 +1,12 @@
 """Deletion is scoped, revokes access and never erases financial history."""
 
-import asyncio
-import socket
 import uuid
-from dataclasses import replace
-from pathlib import Path
 
 import httpx
 import pytest
-import uvicorn
 from conftest import PASSWORD, completion, price, student, team
-from playwright.async_api import async_playwright
 from sqlalchemy import func, select
+from support import artifact
 from test_student_portal import change, login, roster
 
 from gateway.billing import settle
@@ -197,67 +192,52 @@ async def test_deletion_requires_admin_and_csrf(admin, app):
         assert (await admin.delete(f"/admin/api/{scope}/{uuid.uuid4()}")).status_code == 404
 
 
-async def test_browser_delete_buttons_and_cancellation(admin, app):
+async def test_browser_delete_buttons_and_cancellation(admin, app, live_server, browser):
     a, b = await team(admin, "DeleteMe"), await team(admin, "KeepMe")
     first, _ = await student(admin, a, "browser001")
     await student(admin, b, "browser002")
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    base = f"http://127.0.0.1:{sock.getsockname()[1]}"
-    app.state.settings = replace(app.state.settings, public_url=base)
-    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
-    serving = asyncio.create_task(server.serve(sockets=[sock]))
-    try:
-        async with async_playwright() as playwright:
-            browser_path = next(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"))
-            browser = await playwright.chromium.launch(
-                executable_path=str(browser_path), args=["--no-sandbox"]
-            )
-            page = await browser.new_page()
-            errors = []
-            page.on("pageerror", lambda e: errors.append(str(e)))
-            await page.goto(base + "/admin")
-            await page.locator('input[name="password"]').fill(PASSWORD)
-            await page.locator("#login button").click()
-            await page.locator("#console").wait_for(state="visible")
-            await page.locator('nav button[data-view="teams"]').click()
-            row = page.get_by_role("row").filter(has_text="DeleteMe")
-            await row.get_by_role("button", name="删除项目组").wait_for()
-            await row.get_by_role("button", name="删除项目组").click()
-            await page.locator("#confirm-dialog").wait_for(state="visible")
-            await page.screenshot(path="docs/admin-confirm-preview.png")
-            await page.locator("#confirm-cancel").click()
-            assert len((await admin.get("/admin/api/teams")).json()) == 2
-            async with page.expect_response(lambda r: r.request.method == "DELETE") as deleted:
-                await row.get_by_role("button", name="删除项目组").click()
-                await page.locator("#confirm-submit").click()
-            assert (await deleted.value).status == 200
-            await row.wait_for(state="hidden")
-            await page.get_by_role("row").filter(has_text="KeepMe").wait_for()
-            await page.locator('nav button[data-view="members"]').click()
-            row = (
-                page.get_by_role("row")
-                .filter(has_text="browser002")
-                .filter(has=page.get_by_role("button", name="删除成员"))
-            )
-            await row.get_by_role("button", name="删除成员").wait_for()
-            await row.get_by_role("button", name="删除成员").click()
-            await page.locator("#confirm-submit").click()
-            await row.wait_for(state="hidden")
-            await page.locator('nav button[data-view="students"]').click()
-            row = page.get_by_role("row").filter(has_text="browser001")
-            await row.get_by_role("button", name="删除学生").wait_for()
-            await row.get_by_role("button", name="删除学生").click()
-            await page.locator("#confirm-submit").click()
-            await row.wait_for(state="hidden")
-            await page.get_by_role("row").filter(has_text="browser002").wait_for()
-            assert errors == []
-            await browser.close()
-        assert (await admin.get("/admin/api/teams")).json()[0]["id"] == b["id"]
-        assert (await admin.get("/admin/api/students")).json()[0]["student_id"] != first["student_id"]
-    finally:
-        server.should_exit = True
-        await serving
+    base = live_server
+    page = await browser.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    await page.goto(base + "/admin")
+    await page.locator('input[name="password"]').fill(PASSWORD)
+    await page.locator("#login button").click()
+    await page.locator("#console").wait_for(state="visible")
+    await page.locator('nav button[data-view="teams"]').click()
+    row = page.get_by_role("row").filter(has_text="DeleteMe")
+    await row.get_by_role("button", name="删除项目组").wait_for()
+    await row.get_by_role("button", name="删除项目组").click()
+    await page.locator("#confirm-dialog").wait_for(state="visible")
+    await page.screenshot(path=str(artifact("admin-confirm-preview.png")))
+    await page.locator("#confirm-cancel").click()
+    assert len((await admin.get("/admin/api/teams")).json()) == 2
+    async with page.expect_response(lambda r: r.request.method == "DELETE") as deleted:
+        await row.get_by_role("button", name="删除项目组").click()
+        await page.locator("#confirm-submit").click()
+    assert (await deleted.value).status == 200
+    await row.wait_for(state="hidden")
+    await page.get_by_role("row").filter(has_text="KeepMe").wait_for()
+    await page.locator('nav button[data-view="members"]').click()
+    row = (
+        page.get_by_role("row")
+        .filter(has_text="browser002")
+        .filter(has=page.get_by_role("button", name="删除成员"))
+    )
+    await row.get_by_role("button", name="删除成员").wait_for()
+    await row.get_by_role("button", name="删除成员").click()
+    await page.locator("#confirm-submit").click()
+    await row.wait_for(state="hidden")
+    await page.locator('nav button[data-view="students"]').click()
+    row = page.get_by_role("row").filter(has_text="browser001")
+    await row.get_by_role("button", name="删除学生").wait_for()
+    await row.get_by_role("button", name="删除学生").click()
+    await page.locator("#confirm-submit").click()
+    await row.wait_for(state="hidden")
+    await page.get_by_role("row").filter(has_text="browser002").wait_for()
+    assert errors == []
+    assert (await admin.get("/admin/api/teams")).json()[0]["id"] == b["id"]
+    assert (await admin.get("/admin/api/students")).json()[0]["student_id"] != first["student_id"]
 
 
 def test_upgrade_preserves_existing_roster_values(settings):

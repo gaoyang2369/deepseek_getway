@@ -7,7 +7,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from backup import ROOT, compose, decrypt, key_bytes
+from backup import ROOT, decrypt, key_bytes
+from support import compose
 
 p = argparse.ArgumentParser()
 p.add_argument("backup")

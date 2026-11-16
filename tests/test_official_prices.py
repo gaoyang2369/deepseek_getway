@@ -1,20 +1,15 @@
 """Official tariff import fails closed and preserves existing financial records."""
 
-import asyncio
-import socket
-from dataclasses import replace
-from pathlib import Path
-
 import httpx
 import pytest
-import uvicorn
 from conftest import PASSWORD, completion, price, student, team
-from playwright.async_api import async_playwright, expect
+from playwright.async_api import expect
 from sqlalchemy import event, func, select
 from sqlalchemy.exc import OperationalError
+from support import artifact
 from test_deletions import financial_snapshot
 
-from gateway import admin as admin_module
+from gateway.admin import prices as admin_module
 from gateway.models import Audit
 from gateway.official_prices import PricingFormatError, parse_prices
 
@@ -146,39 +141,26 @@ async def test_import_and_remove_require_admin_and_csrf(admin, app, official):
     assert (await admin.delete("/admin/api/prices/unknown")).status_code == 403
 
 
-async def test_browser_import_remove_and_history(admin, app, official):
+async def test_browser_import_remove_and_history(admin, app, official, live_server, browser):
     await price(admin)
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    base = f"http://127.0.0.1:{sock.getsockname()[1]}"
-    app.state.settings = replace(app.state.settings, public_url=base)
-    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
-    serving = asyncio.create_task(server.serve(sockets=[sock]))
-    try:
-        async with async_playwright() as playwright:
-            binary = next(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"))
-            browser = await playwright.chromium.launch(executable_path=str(binary), args=["--no-sandbox"])
-            page = await browser.new_page(viewport={"width": 1550, "height": 1000})
-            errors = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            await page.goto(base + "/admin")
-            await page.locator('input[name="password"]').fill(PASSWORD)
-            await page.locator("#login button").click()
-            await page.locator("#console").wait_for(state="visible")
-            await page.locator('nav button[data-view="prices"]').click()
-            await page.get_by_role("button", name="从 DeepSeek 官网更新", exact=True).click()
-            await expect(page.get_by_role("cell", name="deepseek-flash", exact=True)).to_have_count(2)
-            row = page.get_by_role("row").filter(has=page.get_by_role("cell", name="lab-chat", exact=True))
-            await row.get_by_role("button", name="删除模型", exact=True).click()
-            await page.locator("#confirm-submit").click()
-            await expect(page.get_by_role("cell", name="deepseek-flash", exact=True)).to_have_count(2)
-            await expect(page.get_by_role("cell", name="lab-chat", exact=True)).to_have_count(0)
-            await page.screenshot(path="docs/official-prices-preview.png", full_page=True)
-            await page.get_by_role("button", name="查看历史计价", exact=True).click()
-            await expect(page.get_by_role("cell", name="lab-chat", exact=True)).to_have_count(1)
-            assert "已结束" in await page.locator("#content").inner_text()
-            assert not errors
-            await browser.close()
-    finally:
-        server.should_exit = True
-        await serving
+    base = live_server
+    page = await browser.new_page(viewport={"width": 1550, "height": 1000})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    await page.goto(base + "/admin")
+    await page.locator('input[name="password"]').fill(PASSWORD)
+    await page.locator("#login button").click()
+    await page.locator("#console").wait_for(state="visible")
+    await page.locator('nav button[data-view="prices"]').click()
+    await page.get_by_role("button", name="从 DeepSeek 官网更新", exact=True).click()
+    await expect(page.get_by_role("cell", name="deepseek-flash", exact=True)).to_have_count(2)
+    row = page.get_by_role("row").filter(has=page.get_by_role("cell", name="lab-chat", exact=True))
+    await row.get_by_role("button", name="删除模型", exact=True).click()
+    await page.locator("#confirm-submit").click()
+    await expect(page.get_by_role("cell", name="deepseek-flash", exact=True)).to_have_count(2)
+    await expect(page.get_by_role("cell", name="lab-chat", exact=True)).to_have_count(0)
+    await page.screenshot(path=str(artifact("official-prices-preview.png")), full_page=True)
+    await page.get_by_role("button", name="查看历史计价", exact=True).click()
+    await expect(page.get_by_role("cell", name="lab-chat", exact=True)).to_have_count(1)
+    assert "已结束" in await page.locator("#content").inner_text()
+    assert not errors

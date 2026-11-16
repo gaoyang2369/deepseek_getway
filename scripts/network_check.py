@@ -3,19 +3,18 @@
 import asyncio
 import json
 import time
-from pathlib import Path
 
 import httpx
 from openai import AsyncOpenAI
-
-ROOT = Path(__file__).resolve().parents[1]
+from support import artifact, mock_identity, test_gateway_url
 
 
 async def main():
-    identity = json.loads((ROOT / "secrets/benchmark_client.json").read_text())
-    headers = {"Authorization": "Bearer " + identity["key"]}
-    body = {"model": "lab-chat", "messages": [{"role": "user", "content": "slow"}], "stream": True}
-    async with httpx.AsyncClient(base_url="http://127.0.0.1:18081", trust_env=False, timeout=10) as client:
+    base_url = test_gateway_url()
+    async with httpx.AsyncClient(base_url=base_url, trust_env=False, timeout=10) as client:
+        identity = await mock_identity(client)
+        headers = {"Authorization": "Bearer " + identity["key"]}
+        body = {"model": "lab-chat", "messages": [{"role": "user", "content": "slow"}], "stream": True}
         start = time.perf_counter()
         async with client.stream("POST", "/v1/chat/completions", headers=headers, json=body) as response:
             response.raise_for_status()
@@ -37,14 +36,6 @@ async def main():
         except httpx.ReadTimeout:
             pass
         await asyncio.sleep(0.6)
-        response = await client.post(
-            "/admin/api/login",
-            json={
-                "username": "admin",
-                "password": (ROOT / "secrets/demo_admin_password").read_text().strip(),
-            },
-        )
-        response.raise_for_status()
         rows = (
             await client.get(
                 "/admin/api/requests", params={"student_id": identity["student_id"], "limit": 1000}
@@ -55,7 +46,7 @@ async def main():
         assert interrupted["reservation"] > 0
         assert rows[0]["status"] == "pending" and rows[0]["reason"] == "client_disconnected"
     async with AsyncOpenAI(
-        base_url="http://127.0.0.1:18081/v1",
+        base_url=base_url + "/v1",
         api_key=identity["key"],
         max_retries=0,
         http_client=httpx.AsyncClient(trust_env=False),
@@ -97,7 +88,7 @@ async def main():
         "official_python_sdk": "nonstream, stream and client function round trip passed",
         "paid_calls": 0,
     }
-    (ROOT / "docs/network-results.json").write_text(json.dumps(result, indent=2) + "\n")
+    artifact("network-results.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result))
 
 

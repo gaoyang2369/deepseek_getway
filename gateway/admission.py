@@ -7,10 +7,13 @@ import time
 from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import text
 
-from .security import fail
+from .keys import authenticate
+from .models import Call
+from .security import digest, fail
 
 log = logging.getLogger("lab_gateway")
 
@@ -195,3 +198,61 @@ class AdmissionBatcher:
             await asyncio.gather(*list(self.workers.values()))
         if self.cleanups:
             await asyncio.gather(*list(self.cleanups))
+
+
+RATE_LUA = """
+local a = redis.call('INCR', KEYS[1])
+if a == 1 then redis.call('EXPIRE', KEYS[1], 60) end
+local b = redis.call('INCR', KEYS[2])
+if b == 1 then redis.call('EXPIRE', KEYS[2], 60) end
+return {a, b}
+"""
+
+
+async def admit(app, authorization, body, request_id, ip, started):
+    factory, settings = app.state.db, app.state.settings
+    if not authorization or not authorization.startswith("Bearer ") or len(authorization) > 256:
+        fail(401, "invalid_api_key")
+    key_digest = digest(authorization[7:], settings.hmac_key)
+    route = app.state.admission.route(key_digest)
+    if route is None:
+        async with factory() as db:
+            _, member, _, team = await authenticate(db, authorization, settings)
+        route = team.id, member.id
+        app.state.admission.remember_route(key_digest, *route)
+    team_id, member_id = route
+    # No lock or DB connection is held during Redis I/O. Limits and permissions
+    # are rechecked with current database values inside the atomic admission.
+    rates = await app.state.redis.eval(
+        RATE_LUA, 2, f"rate:{{{team_id}}}:team", f"rate:{{{team_id}}}:{member_id}"
+    )
+    # Include headroom for server-added/replaced max_tokens. No prompt goes to SQL.
+    input_bound = (
+        len(json.dumps(body, ensure_ascii=False).encode()) + 64 * len(body["messages"]) + 256 + 64
+    ) * 2
+    result = await app.state.admission.submit(
+        team_id,
+        {
+            "key_digest": key_digest,
+            "team_attempts": rates[0],
+            "member_attempts": rates[1],
+            "model": body["model"],
+            "output": body.get("max_tokens"),
+            "input_bound": input_bound,
+            "request_id": request_id,
+            "ip": ip,
+        },
+    )
+    if "error" in result:
+        if result["status"] in (401, 403):
+            app.state.admission.routes.pop(key_digest, None)
+        fail(result["status"], result["error"])
+    # The transaction has committed before this timer or any upstream dispatch.
+    values = result["call"]
+    for name in ("started_at", "ended_at"):
+        if values.get(name):
+            values[name] = datetime.fromisoformat(values[name])
+    call = Call(**values)
+    call.admission_ms = round((time.perf_counter() - started) * 1000)
+    body["max_tokens"] = result["max_tokens"]
+    return call, result["ciphertext"], result["upstream_model"]

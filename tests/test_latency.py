@@ -3,16 +3,38 @@
 import asyncio
 import time
 import uuid
+from datetime import datetime
 
 import pytest
 from conftest import completion, price, student, team
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import OperationalError
 
-from gateway.billing import admit
+from gateway.admission import admit
+from gateway.billing import period_bounds
 from gateway.models import BudgetPeriod, Call, Ledger
+from gateway.security import digest
 from gateway.streaming import with_heartbeats
 from scripts.mock_upstream import received
+
+
+@pytest.mark.parametrize("period", ["day", "month"])
+@pytest.mark.parametrize("timestamp", ["2028-02-28T16:00:00+00:00", "2028-02-29T16:00:00+00:00"])
+async def test_sql_admission_and_python_budget_calendar_agree(admin, app, period, timestamp):
+    await price(admin)
+    person, _ = await student(admin, await team(admin, period=period), period=period)
+    at = datetime.fromisoformat(timestamp)
+    async with app.state.db() as db:
+        result = await db.scalar(
+            text("SELECT gateway_admit(:key, 'lab-chat', 64, 1000, :id, '127.0.0.1', 0, 0, :at)"),
+            {"key": digest(person["key"], app.state.settings.hmac_key), "id": str(uuid.uuid4()), "at": at},
+        )
+        assert "error" not in result, result
+        for field in ("team_period_id", "member_period_id"):
+            budget = await db.get(BudgetPeriod, result["call"][field])
+            assert (budget.starts_at, budget.ends_at) == period_bounds(at, period)
+        # Roll back synthetic future admissions; no upstream request is sent.
+        await db.rollback()
 
 
 def admission(app, key):

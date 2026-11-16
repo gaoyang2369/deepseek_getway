@@ -1,9 +1,0 @@
-{
-  "network": "real localhost sockets",
-  "incremental_sse": "passed",
-  "first_delta_seconds": 0.678,
-  "stream_disconnect": "pending, reservation retained",
-  "nonstream_disconnect": "pending, reservation retained",
-  "official_python_sdk": "nonstream, stream and client function round trip passed",
-  "paid_calls": 0
-}

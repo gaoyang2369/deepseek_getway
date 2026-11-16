@@ -1,12 +1,22 @@
+import asyncio
 import os
+import secrets
+import socket
 import subprocess
+import sys
+import uuid
 from dataclasses import replace
 
 import httpx
 import psycopg
 import pytest
+import uvicorn
 from argon2 import PasswordHasher
+from cryptography.fernet import Fernet
+from playwright.async_api import async_playwright
+from psycopg import sql
 from sqlalchemy import delete
+from support import require_isolated_dependencies
 
 from gateway.config import Settings
 from gateway.db import database
@@ -18,27 +28,65 @@ from scripts.mock_upstream import received
 PASSWORD = "test-only-password-1234"
 
 
+@pytest.fixture
+async def live_server(app):
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    base = f"http://127.0.0.1:{sock.getsockname()[1]}"
+    app.state.settings = replace(app.state.settings, public_url=base)
+    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
+    serving = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        async with asyncio.timeout(10):
+            while not server.started:
+                if serving.done():
+                    await serving
+                    raise RuntimeError("Test HTTP server exited before startup")
+                await asyncio.sleep(0.01)
+        yield base
+    finally:
+        server.should_exit = True
+        await serving
+        sock.close()
+
+
+@pytest.fixture
+async def browser():
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            executable_path=os.getenv("GATEWAY_CHROMIUM_PATH"), args=["--no-sandbox"]
+        )
+        try:
+            yield browser
+        finally:
+            await browser.close()
+
+
 @pytest.fixture(scope="session")
 def settings():
-    base = Settings.from_env()
-    assert "127.0.0.1:18543/lab_gateway" in base.database_url, (
-        "Run via scripts/local.py against isolated dependencies"
-    )
-    connection_url = base.database_url.replace("postgresql+psycopg://", "postgresql://")
+    require_isolated_dependencies()
+    name = "lab_gateway_test_" + uuid.uuid4().hex
+    connection_url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://")
     with psycopg.connect(connection_url, autocommit=True) as conn:
-        if not conn.execute("SELECT 1 FROM pg_database WHERE datname='lab_gateway_test'").fetchone():
-            conn.execute("CREATE DATABASE lab_gateway_test")
-    url = base.database_url.rsplit("/", 1)[0] + "/lab_gateway_test"
-    env = {**os.environ, "DATABASE_URL": url}
-    subprocess.run([".venv/bin/alembic", "upgrade", "head"], env=env, check=True)
-    return replace(
-        base,
-        database_url=url,
-        redis_url=base.redis_url.rsplit("/", 1)[0] + "/15",
-        production=False,
-        admin_hash=PasswordHasher().hash(PASSWORD),
-        timeout=0.5,
-    )
+        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    url = os.environ["DATABASE_URL"].rsplit("/", 1)[0] + "/" + name
+    try:
+        env = {**os.environ, "DATABASE_URL": url}
+        subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], env=env, check=True)
+        yield Settings(
+            database_url=url,
+            redis_url=os.environ["REDIS_URL"].rsplit("/", 1)[0] + "/15",
+            encryption_key=Fernet.generate_key().decode(),
+            hmac_key=secrets.token_urlsafe(32),
+            production=False,
+            public_url="http://gateway",
+            upstream_url="http://mock:8080/v1",
+            admin_hash=PasswordHasher().hash(PASSWORD),
+            timeout=0.5,
+        )
+    finally:
+        with psycopg.connect(connection_url, autocommit=True) as conn:
+            conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
 @pytest.fixture

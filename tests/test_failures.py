@@ -11,7 +11,8 @@ import pytest
 from conftest import completion, price, student, team
 from cryptography.exceptions import InvalidTag
 
-from gateway.billing import admit, settle
+from gateway.admission import admit
+from gateway.billing import settle
 from gateway.models import BudgetPeriod, Call, Price
 from scripts.backup import decrypt, encrypt
 from scripts.mock_upstream import received

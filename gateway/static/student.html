@@ -1,39 +1,164 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>学生入口 · 实验室模型网关</title><link rel="stylesheet" href="/student/style.css"></head>
-<body>
-<div id="student-shell">
-<header><a class="brand" href="/student">L / LABORATORY</a><span>实验室模型 API</span></header>
-<div id="student-notice" role="status" aria-live="polite"></div>
-<section id="student-login" class="panel student-card">
-  <div class="eyebrow">MEMBER ACCESS</div><h1>领取你的模型 Key</h1>
-  <p>管理员录入名单后，使用学号登录。首次登录须先修改密码。</p>
-  <form id="student-login-form">
-    <label>学号<input name="username" autocomplete="username" maxlength="64" required></label>
-    <label>密码<input name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
-    <button>登录 →</button>
-  </form><p class="section-note" id="initial-hint"></p><p id="recovery-contact">忘记密码？请联系管理员核实身份后重置。</p>
-</section>
-<section id="student-password" class="panel student-card" hidden>
-  <div class="eyebrow">ACCOUNT SECURITY</div><h1 id="password-title">请先修改初始密码</h1>
-  <p>设置至少 16 个字符的新密码，例如一段你容易记住的短句。改密后才能领取 Key。</p>
-  <form id="student-password-form">
-    <label>当前密码<input name="current_password" type="password" autocomplete="current-password" required maxlength="128"></label>
-    <label>新密码<input name="new_password" type="password" autocomplete="new-password" minlength="16" maxlength="128" required></label>
-    <label>确认新密码<input name="confirmation" type="password" autocomplete="new-password" minlength="16" maxlength="128" required></label>
-    <button>保存新密码</button><button id="password-cancel" class="secondary" type="button" hidden>返回</button>
-  </form>
-</section>
-<section id="student-profile" hidden>
-  <div class="toolbar"><div><div class="eyebrow">YOUR MODEL ACCESS</div><h1 id="student-title"></h1></div><button id="change-password" class="secondary">修改密码</button></div>
-  <div class="panel student-access"><div class="toolbar"><h2>开始使用实验室 API</h2><span class="badge">OpenAI · Chat Completions</span></div><p>先领取下方项目组的个人 Key，再选择接入方式，按示例填写地址、Key 和模型。</p><div class="guide-address"><pre id="student-base-url"></pre><button type="button" id="student-copy-base" class="secondary">复制地址</button></div><a class="guide-jump" href="#student-guide">查看客户端、Agent 与 DeepSeek Harness 接入指南 ↓</a><p class="section-note">完整 Key 仅显示一次，遗失后可轮换。校外使用需保持校园 VPN 或其他到网关的网络连接。</p></div>
-  <div id="student-memberships"></div>
-  <section id="student-guide" class="panel integration-guide" aria-labelledby="guide-title"></section>
-</section>
-<button id="student-logout" class="secondary" hidden>退出登录</button>
-<footer>仅限管理员预先开通的实验室成员。个人 Key 不可转借；预算由管理员统一配置。</footer>
-</div>
-<dialog id="student-key-dialog"><div class="dialog-head"><h2>个人 API Key</h2><button type="button" id="student-key-close" class="secondary">关闭</button></div><p class="key-warning">完整 Key 仅在此处显示一次。关闭后无法找回，请先安全保存。</p><pre id="student-key-value"></pre><div class="guide-key-actions"><button type="button" id="student-key-copy" class="secondary">复制个人 Key</button><button type="button" id="student-key-guide">已保存，查看接入指南</button></div><p id="student-key-base"></p></dialog>
-<dialog id="student-confirm-dialog" class="confirm-dialog" aria-labelledby="student-confirm-title"><div class="confirm-symbol" aria-hidden="true">!</div><h2 id="student-confirm-title">轮换个人 Key？</h2><p>该项目组全部旧 Key 将失效，需要更新客户端中的 Key。预算保持不变。</p><div class="confirm-footer"><button type="button" id="student-confirm-cancel" class="secondary">取消</button><button type="button" id="student-confirm-submit" class="danger-solid">确认轮换</button></div></dialog>
-<script src="/student/guide.js" defer></script><script src="/student/app.js" defer></script>
-</body></html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>学生入口 · 实验室模型网关</title>
+    <link rel="stylesheet" href="/student/style.css" />
+  </head>
+  <body>
+    <div id="student-shell">
+      <header>
+        <a class="brand" href="/student">L / LABORATORY</a
+        ><span>实验室模型 API</span>
+      </header>
+      <div id="student-notice" role="status" aria-live="polite"></div>
+      <section id="student-login" class="panel student-card">
+        <div class="eyebrow">MEMBER ACCESS</div>
+        <h1>领取你的模型 Key</h1>
+        <p>管理员录入名单后，使用学号登录。首次登录须先修改密码。</p>
+        <form id="student-login-form">
+          <label
+            >学号<input
+              name="username"
+              autocomplete="username"
+              maxlength="64"
+              required
+          /></label>
+          <label
+            >密码<input
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              maxlength="128"
+              required
+          /></label>
+          <button>登录 →</button>
+        </form>
+        <p class="section-note" id="initial-hint"></p>
+        <p id="recovery-contact">忘记密码？请联系管理员核实身份后重置。</p>
+      </section>
+      <section id="student-password" class="panel student-card" hidden>
+        <div class="eyebrow">ACCOUNT SECURITY</div>
+        <h1 id="password-title">请先修改初始密码</h1>
+        <p>
+          设置至少 16 个字符的新密码，例如一段你容易记住的短句。改密后才能领取
+          Key。
+        </p>
+        <form id="student-password-form">
+          <label
+            >当前密码<input
+              name="current_password"
+              type="password"
+              autocomplete="current-password"
+              required
+              maxlength="128"
+          /></label>
+          <label
+            >新密码<input
+              name="new_password"
+              type="password"
+              autocomplete="new-password"
+              minlength="16"
+              maxlength="128"
+              required
+          /></label>
+          <label
+            >确认新密码<input
+              name="confirmation"
+              type="password"
+              autocomplete="new-password"
+              minlength="16"
+              maxlength="128"
+              required
+          /></label>
+          <button>保存新密码</button
+          ><button id="password-cancel" class="secondary" type="button" hidden>
+            返回
+          </button>
+        </form>
+      </section>
+      <section id="student-profile" hidden>
+        <div class="toolbar">
+          <div>
+            <div class="eyebrow">YOUR MODEL ACCESS</div>
+            <h1 id="student-title"></h1>
+          </div>
+          <button id="change-password" class="secondary">修改密码</button>
+        </div>
+        <div class="panel student-access">
+          <div class="toolbar">
+            <h2>开始使用实验室 API</h2>
+            <span class="badge">OpenAI · Chat Completions</span>
+          </div>
+          <p>
+            先领取下方项目组的个人 Key，再选择接入方式，按示例填写地址、Key
+            和模型。
+          </p>
+          <div class="guide-address">
+            <pre id="student-base-url"></pre>
+            <button type="button" id="student-copy-base" class="secondary">
+              复制地址
+            </button>
+          </div>
+          <a class="guide-jump" href="#student-guide"
+            >查看客户端、Agent 与 DeepSeek Harness 接入指南 ↓</a
+          >
+          <p class="section-note">
+            完整 Key 仅显示一次，遗失后可轮换。校外使用需保持校园 VPN
+            或其他到网关的网络连接。
+          </p>
+        </div>
+        <div id="student-memberships"></div>
+        <section
+          id="student-guide"
+          class="panel integration-guide"
+          aria-labelledby="guide-title"
+        ></section>
+      </section>
+      <button id="student-logout" class="secondary" hidden>退出登录</button>
+      <footer>
+        仅限管理员预先开通的实验室成员。个人 Key
+        不可转借；预算由管理员统一配置。
+      </footer>
+    </div>
+    <dialog id="student-key-dialog">
+      <div class="dialog-head">
+        <h2>个人 API Key</h2>
+        <button type="button" id="student-key-close" class="secondary">
+          关闭
+        </button>
+      </div>
+      <p class="key-warning">
+        完整 Key 仅在此处显示一次。关闭后无法找回，请先安全保存。
+      </p>
+      <pre id="student-key-value"></pre>
+      <div class="guide-key-actions">
+        <button type="button" id="student-key-copy" class="secondary">
+          复制个人 Key</button
+        ><button type="button" id="student-key-guide">
+          已保存，查看接入指南
+        </button>
+      </div>
+      <p id="student-key-base"></p>
+    </dialog>
+    <dialog
+      id="student-confirm-dialog"
+      class="confirm-dialog"
+      aria-labelledby="student-confirm-title"
+    >
+      <div class="confirm-symbol" aria-hidden="true">!</div>
+      <h2 id="student-confirm-title">轮换个人 Key？</h2>
+      <p>该项目组全部旧 Key 将失效，需要更新客户端中的 Key。预算保持不变。</p>
+      <div class="confirm-footer">
+        <button type="button" id="student-confirm-cancel" class="secondary">
+          取消</button
+        ><button type="button" id="student-confirm-submit" class="danger-solid">
+          确认轮换
+        </button>
+      </div>
+    </dialog>
+    <script src="/student/guide.js" defer></script>
+    <script src="/student/app.js" defer></script>
+  </body>
+</html>

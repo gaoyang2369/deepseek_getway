@@ -25,6 +25,12 @@ class StudentIdentity(Strict):
     name: Name | None = None
 
 
+def aware_expiry(value):
+    if value is not None and value.tzinfo is None:
+        raise ValueError("timezone required")
+    return value
+
+
 class StudentImport(Strict):
     operation_id: str = Field(min_length=16, max_length=100)
     team_id: str = Field(max_length=36)
@@ -35,12 +41,7 @@ class StudentImport(Strict):
     initial_password_mode: Literal["student_number", "random"] = "student_number"
     expires_at: datetime | None = None
 
-    @field_validator("expires_at")
-    @classmethod
-    def aware_expiry(cls, value):
-        if value is not None and value.tzinfo is None:
-            raise ValueError("timezone required")
-        return value
+    _aware = field_validator("expires_at")(aware_expiry)
 
     @field_validator("students")
     @classmethod
@@ -114,12 +115,7 @@ class Enroll(Strict):
                 raise ValueError("identity cannot be blank")
         return value
 
-    @field_validator("expires_at")
-    @classmethod
-    def aware(cls, value):
-        if value is not None and value.tzinfo is None:
-            raise ValueError("timezone required")
-        return value
+    _aware = field_validator("expires_at")(aware_expiry)
 
 
 class CredentialRotate(Strict):
@@ -132,7 +128,7 @@ class KeyIssue(Strict):
     expires_at: datetime | None = None
     revoke_key_id: str | None = Field(default=None, max_length=36)
 
-    _aware = field_validator("expires_at")(Enroll.aware.__func__)
+    _aware = field_validator("expires_at")(aware_expiry)
 
 
 class BudgetUpdate(Strict):
@@ -297,3 +293,14 @@ def chat_validation_details(errors):
             {"parameter": ".".join(parts) or "body", "code": codes.get(item["type"], "invalid_value")}
         )
     return details
+
+
+class PriceCreate(Strict):
+    model: str
+    upstream_model: str
+    version: str
+    input_miss: int
+    input_hit: int
+    output: int
+    estimated: bool = True
+    note: str

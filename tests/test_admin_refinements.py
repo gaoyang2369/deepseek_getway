@@ -1,23 +1,19 @@
 """Student self-service, optional team codes, and scoped demo ledger cleanup."""
 
-import asyncio
-import socket
 import uuid
 from dataclasses import replace
-from pathlib import Path
 
 import httpx
-import uvicorn
 from argon2 import PasswordHasher
 from conftest import PASSWORD, completion, price, student, team
-from playwright.async_api import async_playwright
 from sqlalchemy import event, func, select
 from sqlalchemy.exc import OperationalError
+from support import artifact
 from test_deletions import financial_snapshot
 from test_student_portal import change, login
 
 from gateway.accounts import backfill_demo_accounts
-from gateway.billing import admit
+from gateway.admission import admit
 from gateway.models import Audit, Membership, Operation, PersonalKey, Student, StudentAccount
 
 
@@ -215,86 +211,71 @@ async def test_cleanup_rollback_retains_both_sides_of_budget_accounting(admin, a
     assert await financial_snapshot(app) == before
 
 
-async def test_browser_name_student_reset_and_test_cleanup(admin, app):
+async def test_browser_name_student_reset_and_test_cleanup(admin, app, live_server, browser):
     await price(admin)
     group = await team(admin, "browser_cleanup", name="测试清理组")
     person, _ = await student(admin, group)
     await completion(admin, person["key"])
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    base = f"http://127.0.0.1:{sock.getsockname()[1]}"
-    app.state.settings = replace(app.state.settings, public_url=base)
-    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
-    serving = asyncio.create_task(server.serve(sockets=[sock]))
-    try:
-        async with async_playwright() as p:
-            browser_path = next(Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux64/chrome"))
-            browser = await p.chromium.launch(executable_path=str(browser_path), args=["--no-sandbox"])
-            page = await browser.new_page(viewport={"width": 1440, "height": 1000})
-            errors, native_dialogs = [], []
-            page.on("pageerror", lambda e: errors.append(str(e)))
-            page.on("dialog", lambda d: (native_dialogs.append(d.type), d.dismiss()))
-            await page.goto(base + "/admin")
-            await page.locator('input[name="password"]').fill(PASSWORD)
-            await page.locator("#login button").click()
-            await page.locator("#console").wait_for(state="visible")
-            await page.locator('nav button[data-view="teams"]').click()
-            await page.get_by_role("button", name="＋ 创建项目组").click()
-            assert await page.locator('input[name="code"]').count() == 0
-            await page.locator('input[name="name"]').fill("只填名称的新组")
-            await page.locator('input[name="upstream_key"]').fill("MOCK-browser-key")
-            await page.locator('input[name="models"]').fill("lab-chat")
-            await page.locator("#modal-submit").click()
-            await page.locator("#modal").wait_for(state="hidden")
-            await page.get_by_role("cell", name="只填名称的新组", exact=True).wait_for()
-            assert await page.get_by_role("columnheader", name="标识", exact=True).count() == 0
-            await page.locator('nav button[data-view="members"]').click()
-            await page.get_by_role("button", name="＋ 添加人员").click()
-            await page.locator('input[name="name"]').fill("浏览器学生")
-            await page.locator('input[name="student_number"]').fill("browser-new")
-            await page.locator('select[name="team_id"]').select_option(group["id"])
-            await page.locator("#modal-submit").click()
-            await page.get_by_role("heading", name="学生账号已开通").wait_for()
-            assert "网页登录已自动开通" in await page.locator("#modal-fields").inner_text()
-            assert "lab_" not in await page.locator("#modal-fields").inner_text()
-            await page.locator("#close-modal").click()
-            await page.locator('nav button[data-view="students"]').click()
-            row = page.get_by_role("row").filter(has_text="browser-new")
-            await row.get_by_role("button", name="重置密码").wait_for()
-            assert await page.get_by_role("button", name="启用网页登录").count() == 0
-            await row.get_by_role("button", name="重置密码").click()
-            await page.locator('textarea[name="reason"]').fill("测试")
-            assert await page.locator("#modal-form").evaluate("(f)=>f.checkValidity()")
-            await page.route(
-                "**/reset-password",
-                lambda route: route.fulfill(
-                    status=422, json={"error": {"message": "invalid_request_parameters"}}
-                ),
-            )
-            await page.locator("#modal-submit").click()
-            await page.locator("#modal-error").wait_for(state="visible")
-            assert "invalid_request_parameters" not in await page.locator("#modal-error").inner_text()
-            await page.screenshot(path="docs/admin-form-error-preview.png")
-            await page.unroute("**/reset-password")
-            await page.locator("#modal-submit").click()
-            await page.get_by_role("heading", name="临时密码（仅显示一次）").wait_for()
-            await page.locator("#close-modal").click()
-            await page.locator('nav button[data-view="budgets"]').click()
-            await page.get_by_role("button", name="清理测试记录", exact=True).click()
-            await page.locator('select[name="team_id"]').select_option(group["id"])
-            await page.locator('input[name="confirm_name"]').fill("wrong")
-            await page.locator("#modal-submit").click()
-            await page.locator("#modal-error").wait_for(state="visible")
-            assert "名称不一致" in await page.locator("#modal-error").inner_text()
-            await page.locator('input[name="confirm_name"]').fill(group["name"])
-            await page.screenshot(path="docs/admin-cleanup-preview.png")
-            await page.locator("#modal-submit").click()
-            await page.locator("#modal").wait_for(state="hidden")
-            await page.locator("#notice.success").wait_for(state="visible")
-            assert not (await admin.get("/admin/api/budgets")).json()
-            assert len((await admin.get("/admin/api/teams")).json()) == 2
-            assert not errors and not native_dialogs
-            await browser.close()
-    finally:
-        server.should_exit = True
-        await serving
+    base = live_server
+    page = await browser.new_page(viewport={"width": 1440, "height": 1000})
+    errors, native_dialogs = [], []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("dialog", lambda d: (native_dialogs.append(d.type), d.dismiss()))
+    await page.goto(base + "/admin")
+    await page.locator('input[name="password"]').fill(PASSWORD)
+    await page.locator("#login button").click()
+    await page.locator("#console").wait_for(state="visible")
+    await page.locator('nav button[data-view="teams"]').click()
+    await page.get_by_role("button", name="＋ 创建项目组").click()
+    assert await page.locator('input[name="code"]').count() == 0
+    await page.locator('input[name="name"]').fill("只填名称的新组")
+    await page.locator('input[name="upstream_key"]').fill("MOCK-browser-key")
+    await page.locator('input[name="models"]').fill("lab-chat")
+    await page.locator("#modal-submit").click()
+    await page.locator("#modal").wait_for(state="hidden")
+    await page.get_by_role("cell", name="只填名称的新组", exact=True).wait_for()
+    assert await page.get_by_role("columnheader", name="标识", exact=True).count() == 0
+    await page.locator('nav button[data-view="members"]').click()
+    await page.get_by_role("button", name="＋ 添加人员").click()
+    await page.locator('input[name="name"]').fill("浏览器学生")
+    await page.locator('input[name="student_number"]').fill("browser-new")
+    await page.locator('select[name="team_id"]').select_option(group["id"])
+    await page.locator("#modal-submit").click()
+    await page.get_by_role("heading", name="学生账号已开通").wait_for()
+    assert "网页登录已自动开通" in await page.locator("#modal-fields").inner_text()
+    assert "lab_" not in await page.locator("#modal-fields").inner_text()
+    await page.locator("#close-modal").click()
+    await page.locator('nav button[data-view="students"]').click()
+    row = page.get_by_role("row").filter(has_text="browser-new")
+    await row.get_by_role("button", name="重置密码").wait_for()
+    assert await page.get_by_role("button", name="启用网页登录").count() == 0
+    await row.get_by_role("button", name="重置密码").click()
+    await page.locator('textarea[name="reason"]').fill("测试")
+    assert await page.locator("#modal-form").evaluate("(f)=>f.checkValidity()")
+    await page.route(
+        "**/reset-password",
+        lambda route: route.fulfill(status=422, json={"error": {"message": "invalid_request_parameters"}}),
+    )
+    await page.locator("#modal-submit").click()
+    await page.locator("#modal-error").wait_for(state="visible")
+    assert "invalid_request_parameters" not in await page.locator("#modal-error").inner_text()
+    await page.screenshot(path=str(artifact("admin-form-error-preview.png")))
+    await page.unroute("**/reset-password")
+    await page.locator("#modal-submit").click()
+    await page.get_by_role("heading", name="临时密码（仅显示一次）").wait_for()
+    await page.locator("#close-modal").click()
+    await page.locator('nav button[data-view="budgets"]').click()
+    await page.get_by_role("button", name="清理测试记录", exact=True).click()
+    await page.locator('select[name="team_id"]').select_option(group["id"])
+    await page.locator('input[name="confirm_name"]').fill("wrong")
+    await page.locator("#modal-submit").click()
+    await page.locator("#modal-error").wait_for(state="visible")
+    assert "名称不一致" in await page.locator("#modal-error").inner_text()
+    await page.locator('input[name="confirm_name"]').fill(group["name"])
+    await page.screenshot(path=str(artifact("admin-cleanup-preview.png")))
+    await page.locator("#modal-submit").click()
+    await page.locator("#modal").wait_for(state="hidden")
+    await page.locator("#notice.success").wait_for(state="visible")
+    assert not (await admin.get("/admin/api/budgets")).json()
+    assert len((await admin.get("/admin/api/teams")).json()) == 2
+    assert not errors and not native_dialogs

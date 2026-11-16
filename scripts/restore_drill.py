@@ -5,11 +5,13 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+import uuid
 from pathlib import Path
 
 import psycopg
+from backup import create_backup
 from psycopg import sql
+from support import artifact, require_isolated_dependencies
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,27 +34,41 @@ def snapshot(connection):
     return result
 
 
+require_isolated_dependencies()
 url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://")
 with psycopg.connect(url) as source:
     source.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
     snapshot_id = source.execute("SELECT pg_export_snapshot()").fetchone()[0]
     before = snapshot(source)
-    subprocess.run([sys.executable, str(ROOT / "scripts/backup.py"), "--snapshot", snapshot_id], check=True)
-backup = max((ROOT / "backups").glob("*-database.enc"), key=lambda p: p.stat().st_mtime)
-target = "lab_gateway_restore_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    backup = create_backup(
+        key_file=ROOT / "secrets/backup_key",
+        directory=artifact("restore"),
+        snapshot=snapshot_id,
+        database=source.info.dbname,
+    )
+target = "lab_gateway_restore_" + uuid.uuid4().hex[:24]
 start = time.perf_counter()
-subprocess.run(
-    [sys.executable, str(ROOT / "scripts/restore.py"), str(backup), "--target", target], check=True
-)
-with psycopg.connect(url.rsplit("/", 1)[0] + "/" + target) as connection:
-    restored = snapshot(connection)
-assert before == restored, "Restored database differs from source snapshot"
-report = {
-    "target": target,
-    "all_rows_match": True,
-    "restore_seconds": round(time.perf_counter() - start, 3),
-    "tables": {name: len(rows) for name, rows in before.items()},
-    "scope": "identities, key digests, encrypted credentials, budgets, pending requests, ledger, audit; all rows",
-}
-(ROOT / "docs/restore-results.json").write_text(json.dumps(report, indent=2) + "\n")
-print(json.dumps(report))
+restored_successfully = False
+try:
+    subprocess.run(
+        [sys.executable, str(ROOT / "scripts/restore.py"), str(backup), "--target", target], check=True
+    )
+    restored_successfully = True
+    with psycopg.connect(url.rsplit("/", 1)[0] + "/" + target) as connection:
+        restored = snapshot(connection)
+    assert before == restored, "Restored database differs from source snapshot"
+    report = {
+        "target": target,
+        "all_rows_match": True,
+        "restore_seconds": round(time.perf_counter() - start, 3),
+        "tables": {name: len(rows) for name, rows in before.items()},
+        "scope": "identities, key digests, encrypted credentials, budgets, pending requests, ledger, audit; all rows",
+    }
+    artifact("restore-results.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report))
+finally:
+    # A failed createdb must never cause deletion of a pre-existing restore target.
+    # Failed imports are left for diagnosis; only a successful restore is ours to remove.
+    if restored_successfully:
+        with psycopg.connect(url, autocommit=True) as connection:
+            connection.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(target)))

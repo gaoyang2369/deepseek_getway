@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from support import compose
 
 MAGIC = b"LABBACKUP1"
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,10 +65,6 @@ def decrypt(source, target, key):
         index += 1
 
 
-def compose(*args):
-    return ["docker", "compose", "-f", str(ROOT / "compose.yaml"), *args]
-
-
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--key-file", default=str(ROOT / "secrets/backup_key"))
@@ -75,22 +72,30 @@ def main():
     p.add_argument("--secrets", action="store_true", help="Create a separate encrypted secrets archive")
     p.add_argument("--snapshot", help="Exported PostgreSQL snapshot held open by a restore drill")
     args = p.parse_args()
+    output = create_backup(
+        key_file=args.key_file, directory=args.directory, include_secrets=args.secrets, snapshot=args.snapshot
+    )
+    print(f"Encrypted backup written: {output}")
+
+
+def create_backup(*, key_file, directory, include_secrets=False, snapshot=None, database="lab_gateway"):
     os.umask(0o077)
-    key = key_bytes(args.key_file)
-    destination = Path(args.directory)
+    key = key_bytes(key_file)
+    destination = Path(directory)
     destination.mkdir(parents=True, mode=0o700, exist_ok=True)
     at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    output = destination / (at + ("-secrets.enc" if args.secrets else "-database.enc"))
+    output = destination / (at + ("-secrets.enc" if include_secrets else "-database.enc"))
+    target = output.open("xb")
     try:
-        with output.open("xb") as target:
-            if args.secrets:
+        with target:
+            if include_secrets:
                 buffer = io.BytesIO()
                 with tarfile.open(fileobj=buffer, mode="w") as archive:
                     archive.add(ROOT / ".env", arcname=".env")
                     for file in (ROOT / "secrets").iterdir():
                         if (
                             file.is_file()
-                            and file.resolve() != Path(args.key_file).resolve()
+                            and file.resolve() != Path(key_file).resolve()
                             and file.name != "demo_admin_password"
                         ):
                             archive.add(file, arcname="secrets/" + file.name)
@@ -105,12 +110,12 @@ def main():
                     "-U",
                     "lab_gateway",
                     "-d",
-                    "lab_gateway",
+                    database,
                     "-Fc",
                     "--no-owner",
                 )
-                if args.snapshot:
-                    command.extend(["--snapshot", args.snapshot])
+                if snapshot:
+                    command.extend(["--snapshot", snapshot])
                 proc = subprocess.Popen(command, stdout=subprocess.PIPE)
                 try:
                     encrypt(proc.stdout, target, key)
@@ -118,7 +123,7 @@ def main():
                     proc.stdout.close()
                 if proc.wait() != 0:
                     raise RuntimeError("pg_dump failed")
-        print(f"Encrypted backup written: {output}")
+        return output
     except BaseException:
         output.unlink(missing_ok=True)
         raise

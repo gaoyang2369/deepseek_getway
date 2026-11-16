@@ -9,7 +9,8 @@ from conftest import completion, price, student, team
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 
-from gateway.billing import admit, parse_usage, period_bounds, recover, settle
+from gateway.admission import admit
+from gateway.billing import parse_usage, period_bounds, recover, settle
 from gateway.models import Audit, BudgetPeriod, Call, Credential, Ledger, Membership, PersonalKey
 from gateway.security import client_ip
 from scripts.mock_upstream import received

@@ -8,7 +8,7 @@ import httpx
 import pytest
 from argon2 import PasswordHasher
 from conftest import completion, price, team
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from gateway.models import Audit, BudgetPeriod, Membership, Operation, PersonalKey, StudentAccount, now
 
@@ -51,6 +51,48 @@ async def change(portal, current, new=NEW_PASSWORD):
     assert r.status_code == 200, r.text
     portal.headers["X-CSRF-Token"] = r.json()["csrf_token"]
     return r
+
+
+async def test_membership_overview_queries_do_not_grow_with_memberships(admin, app, portal):
+    await price(admin)
+    number = "overview-001"
+    await roster(admin, await team(admin, "overview-0"), numbers=(number,))
+    await login(portal, number)
+    await change(portal, number)
+
+    async def overview():
+        statements = []
+
+        def count(conn, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        event.listen(app.state.engine.sync_engine, "before_cursor_execute", count)
+        try:
+            result = await portal.get("/student/api/me")
+            assert result.status_code == 200
+            return result.json()["memberships"], len(statements)
+        finally:
+            event.remove(app.state.engine.sync_engine, "before_cursor_execute", count)
+
+    first, single_queries = await overview()
+    assert len(first) == 1 and first[0]["keys"] == []
+    for i in range(1, 4):
+        await roster(admin, await team(admin, f"overview-{i}"), numbers=(number,))
+    issued = await portal.post(
+        "/student/api/keys",
+        json={
+            "operation_id": str(uuid.uuid4()),
+            "membership_id": first[0]["id"],
+        },
+    )
+    assert issued.status_code == 201
+    assert (await completion(portal, issued.json()["key"])).status_code == 200
+    members, multiple_queries = await overview()
+    assert [m["team"] for m in members] == [f"overview-{i}" for i in range(4)]
+    assert members[0]["spent"] == 188 and len(members[0]["keys"]) == 1
+    assert all(m["spent"] == 0 and m["keys"] == [] for m in members[1:])
+    assert multiple_queries == single_queries
 
 
 async def test_student_first_login_key_rotation_and_shared_budget(admin, app, portal):

@@ -1,6 +1,4 @@
 import hashlib
-import json
-import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -13,17 +11,11 @@ from .models import (
     Call,
     Event,
     Ledger,
-    Membership,
-    PersonalKey,
     Price,
-    Student,
-    Team,
     now,
     uid,
 )
-from .security import digest, fail
 
-ACTIVE = ("reserved", "running", "pending")
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -94,38 +86,6 @@ async def event(db, kind, team_id=None, member_id=None, detail=None, scope=None)
     )
 
 
-async def authenticate(db, authorization, settings):
-    if not authorization or not authorization.startswith("Bearer ") or len(authorization) > 256:
-        fail(401, "invalid_api_key")
-    row = (
-        await db.execute(
-            select(PersonalKey, Membership, Student, Team)
-            .join(Membership, Membership.id == PersonalKey.membership_id)
-            .join(Student, Student.id == Membership.student_id)
-            .join(Team, Team.id == Membership.team_id)
-            .where(PersonalKey.digest == digest(authorization[7:], settings.hmac_key))
-            .execution_options(populate_existing=True)
-        )
-    ).one_or_none()
-    if row is None:
-        fail(401, "invalid_api_key")
-    key, member, student, team = row
-    if not key.active or (key.expires_at and key.expires_at <= now()):
-        fail(401, "invalid_api_key")
-    if not member.active or not student.active or not team.active:
-        fail(403, "identity_disabled")
-    return key, member, student, team
-
-
-RATE_LUA = """
-local a = redis.call('INCR', KEYS[1])
-if a == 1 then redis.call('EXPIRE', KEYS[1], 60) end
-local b = redis.call('INCR', KEYS[2])
-if b == 1 then redis.call('EXPIRE', KEYS[2], 60) end
-return {a, b}
-"""
-
-
 async def get_period(db, kind, owner, at):
     start, end = period_bounds(at, owner.period)
     await db.execute(
@@ -150,55 +110,6 @@ async def get_period(db, kind, owner, at):
             BudgetPeriod.starts_at == start,
         )
     )
-
-
-async def admit(app, authorization, body, request_id, ip, started):
-    factory, settings = app.state.db, app.state.settings
-    if not authorization or not authorization.startswith("Bearer ") or len(authorization) > 256:
-        fail(401, "invalid_api_key")
-    key_digest = digest(authorization[7:], settings.hmac_key)
-    route = app.state.admission.route(key_digest)
-    if route is None:
-        async with factory() as db:
-            _, member, _, team = await authenticate(db, authorization, settings)
-        route = team.id, member.id
-        app.state.admission.remember_route(key_digest, *route)
-    team_id, member_id = route
-    # No lock or DB connection is held during Redis I/O. Limits and permissions
-    # are rechecked with current database values inside the atomic admission.
-    rates = await app.state.redis.eval(
-        RATE_LUA, 2, f"rate:{{{team_id}}}:team", f"rate:{{{team_id}}}:{member_id}"
-    )
-    # Include headroom for server-added/replaced max_tokens. No prompt goes to SQL.
-    input_bound = (
-        len(json.dumps(body, ensure_ascii=False).encode()) + 64 * len(body["messages"]) + 256 + 64
-    ) * 2
-    result = await app.state.admission.submit(
-        team_id,
-        {
-            "key_digest": key_digest,
-            "team_attempts": rates[0],
-            "member_attempts": rates[1],
-            "model": body["model"],
-            "output": body.get("max_tokens"),
-            "input_bound": input_bound,
-            "request_id": request_id,
-            "ip": ip,
-        },
-    )
-    if "error" in result:
-        if result["status"] in (401, 403):
-            app.state.admission.routes.pop(key_digest, None)
-        fail(result["status"], result["error"])
-    # The transaction has committed before this timer or any upstream dispatch.
-    values = result["call"]
-    for name in ("started_at", "ended_at"):
-        if values.get(name):
-            values[name] = datetime.fromisoformat(values[name])
-    call = Call(**values)
-    call.admission_ms = round((time.perf_counter() - started) * 1000)
-    body["max_tokens"] = result["max_tokens"]
-    return call, result["ciphertext"], result["upstream_model"]
 
 
 async def settle(

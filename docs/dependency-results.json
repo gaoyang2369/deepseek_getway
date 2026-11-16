@@ -1,9 +1,0 @@
-{
-  "services": {
-    "redis": "503 before upstream dispatch",
-    "postgres": "503 before upstream dispatch"
-  },
-  "budgets_unchanged_during_failures": true,
-  "recovered_paid_path": "MOCK response and persisted request passed",
-  "paid_calls": 0
-}

@@ -1,17 +1,17 @@
 """Pre-provisioned student accounts. Never permit self-registration or budget edits."""
 
 import secrets
+from collections import defaultdict
 from datetime import timedelta
 
 import anyio
 from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import APIRouter, Request, Response
 from sqlalchemy import delete, select
 
-from .admin import issue, operation
+from .accounts import password_matches
+from .keys import issue
 from .models import (
-    Audit,
     BudgetPeriod,
     Membership,
     Operation,
@@ -22,31 +22,14 @@ from .models import (
     Team,
     now,
 )
+from .operations import audit, operation
 from .schemas import Login, PasswordChange, StudentKeyIssue
-from .security import client_ip, digest, fail
+from .security import check_origin, client_ip, digest, fail
 
 router = APIRouter(prefix="/student/api")
 COOKIE = "lab_student_session"
 HASHER = PasswordHasher()
 DUMMY_HASH = HASHER.hash(secrets.token_urlsafe(32))
-
-
-def record(db, request, student_id, action, target, detail=None):
-    db.add(
-        Audit(
-            actor="student:" + student_id,
-            action=action,
-            target=target,
-            detail=detail or {},
-            request_id=request.state.request_id,
-        )
-    )
-
-
-def check_origin(request):
-    origin = request.headers.get("origin")
-    if origin and origin != request.app.state.settings.public_url:
-        fail(403, "invalid_origin")
 
 
 async def rate_limit(request, scope, identity, limit=10, seconds=300):
@@ -63,16 +46,6 @@ async def rate_limit(request, scope, identity, limit=10, seconds=300):
         )
         if count > maximum:
             fail(429, "student_rate_limit")
-
-
-async def password_matches(encoded, password):
-    def verify():
-        try:
-            return HASHER.verify(encoded, password)
-        except (VerificationError, InvalidHashError):
-            return False
-
-    return await anyio.to_thread.run_sync(verify)
 
 
 async def start_session(db, request, response, account):
@@ -152,7 +125,7 @@ async def login(data: Login, request: Request, response: Response):
         student = await db.get(Student, account.student_id)
         if account.password_hash != encoded or not student.active:
             fail(401, "invalid_login")
-        record(db, request, account.student_id, "student_login", account.student_id)
+        audit(db, request, "student_login", account.student_id, actor="student:" + account.student_id)
         return await start_session(db, request, response, account)
 
 
@@ -181,23 +154,34 @@ async def me(request: Request):
                 .order_by(Team.code)
             )
         ).all()
-        result["memberships"] = []
-        for member, team in memberships:
-            period = await db.scalar(
-                select(BudgetPeriod).where(
-                    BudgetPeriod.owner_type == "membership",
-                    BudgetPeriod.owner_id == member.id,
-                    BudgetPeriod.starts_at <= now(),
-                    BudgetPeriod.ends_at > now(),
-                )
-            )
-            keys = (
+        member_ids = [member.id for member, _ in memberships]
+        at = now()
+        periods = {
+            period.owner_id: period
+            for period in (
                 await db.scalars(
-                    select(PersonalKey)
-                    .where(PersonalKey.membership_id == member.id)
-                    .order_by(PersonalKey.created_at.desc())
+                    select(BudgetPeriod).where(
+                        BudgetPeriod.owner_type == "membership",
+                        BudgetPeriod.owner_id.in_(member_ids),
+                        BudgetPeriod.starts_at <= at,
+                        BudgetPeriod.ends_at > at,
+                    )
                 )
             ).all()
+        }
+        keys_by_member = defaultdict(list)
+        for key in (
+            await db.scalars(
+                select(PersonalKey)
+                .where(PersonalKey.membership_id.in_(member_ids))
+                .order_by(PersonalKey.created_at.desc())
+            )
+        ).all():
+            keys_by_member[key.membership_id].append(key)
+        result["memberships"] = []
+        for member, team in memberships:
+            period = periods.get(member.id)
+            keys = keys_by_member[member.id]
             limit = period.limit if period else member.budget
             spent, reserved = (period.spent, period.reserved) if period else (0, 0)
             result["memberships"].append(
@@ -239,7 +223,7 @@ async def password(data: PasswordChange, request: Request, response: Response):
         account.must_change_password = False
         account.auth_version += 1
         await db.execute(delete(StudentSession).where(StudentSession.student_id == student.id))
-        record(db, request, student.id, "student_password_change", student.id)
+        audit(db, request, "student_password_change", student.id, actor="student:" + student.id)
         return await start_session(db, request, response, account)
 
 
@@ -283,13 +267,13 @@ async def issue_key(data: StudentKeyIssue, request: Request):
             "base_url": request.app.state.settings.public_url + "/v1",
         }
         db.add(Operation(id=data.operation_id, fingerprint=fingerprint, result=result))
-        record(
+        audit(
             db,
             request,
-            student.id,
             "student_key_issue",
             key.id,
             {"membership_id": member.id, "revoked_count": len(keys)},
+            actor="student:" + student.id,
         )
         return {**result, "key": raw, "replayed": False}
 

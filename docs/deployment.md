@@ -1,78 +1,55 @@
 # 部署说明
 
-当前服务器环境：Ubuntu 24.04、x86_64、约 125 GiB 内存、Docker Compose v5.1.4。80/443 已由现有服务占用，常见数据库端口也已使用。开发使用独立 Compose 项目 `lab-llm-gateway` 与 18081 端口；不覆盖现有站点。
+## 独立模拟环境
 
-## 模拟运行
-
-按 README 初始化并启动：
+需要 Python 3.12、uv、Docker Compose。在干净目录初始化，已有 `.env`/`secrets/` 时不要重新初始化或 seed。模拟与正式部署使用独立目录、Compose 项目和数据卷。
 
 ```bash
 uv sync --locked
 .venv/bin/python scripts/init_secrets.py --demo
 docker compose -f compose.yaml -f compose.demo.yaml up -d --build
 .venv/bin/python scripts/seed_demo.py
+.venv/bin/python scripts/seed_student_demo.py
 ```
 
-已存在 `.env` 和 `secrets/` 时初始化脚本拒绝覆盖。若在已有部署继续操作，不再次执行初始化或 seed。生产与模拟必须使用独立目录、独立 Compose 项目、独立数据卷。
+新环境默认发布 `127.0.0.1:18081`，PostgreSQL/Redis 不发布主机端口。管理员 `/admin`、学生 `/student`，根地址跳转学生入口。演示管理员密码仅保存在 `secrets/demo_admin_password`，seed 生成的客户端资料在 `secrets/demo_clients.json`（0600）。模拟学生首次登录使用学号，随后必须改密。
 
-当前服务器按用户要求开放 IPv4 监听 `0.0.0.0:18081`，管理页面 <http://10.108.13.250:18081/admin>。这是校园网地址，客户端须与服务器网络可达。配置为 `.env` 中 `GATEWAY_BIND_HOST=0.0.0.0`、`GATEWAY_PORT=18081`、`PUBLIC_URL=http://10.108.13.250:18081`。修改后执行 `docker compose -f compose.yaml -f compose.demo.yaml up -d --no-deps --wait gateway`。
+**`GATEWAY_ENV=demo` 不保证调用免费。** 它允许 HTTP 和演示初始密码；是否使用 MOCK 取决于实际 `UPSTREAM_URL`。不要从历史截图或文档推断在线实例仍是模拟环境。
 
-`PUBLIC_URL` 与浏览器实际来源必须一致，不能填 `http://0.0.0.0:18081`。换 IP 或端口时同时更新它，否则登录和修改请求会被来源校验拒绝。新初始化默认回环监听；需要恢复回环时设置 `GATEWAY_BIND_HOST=127.0.0.1`、`PUBLIC_URL=http://127.0.0.1:18081` 并重建网关容器。
+## 正式配置
 
-## 生产配置
+在新的受控目录运行 `scripts/init_secrets.py`（不带 `--demo`），交互设置至少 16 字符的管理员密码。秘密文件和 `.env` 为 0600、秘密目录为 0700；`.env` 中的数据库/Redis 凭据同样需要保护。
 
-在新的受控目录使用 `scripts/init_secrets.py`（不带 `--demo`），通过终端交互设置至少 16 字符管理员密码。脚本生成数据库、Redis、认证加密、HMAC 和备份秘密，文件权限为 0600，目录 0700。`.env` 包含数据库/Redis连接凭证，同样作为秘密保护。
-
-必填清单：
-
-- 可由客户端信任的 HTTPS 入口及证书，`PUBLIC_URL` 为实际 HTTPS 地址；可用域名，也可用配置正确且被客户端信任的 IP 证书。域名不会使校园私网地址自动变为公网可达。
-- 各组的名称、允许模型、预算、RPM、并发、输出上限。
-- 学生姓名、字符串学号、项目组、个人周期预算、Key 允许模型与到期。
-- 管理员确认的 DeepSeek 模型 ID、价格版本、币种/时段换算和保守估算说明。
-- 每组新的服务器专用 DeepSeek 官方 Key；在管理页录入，不粘贴到聊天。
-- 实际管理访问网段、可信反向代理地址、校园网/VPN/公网访问边界。
-- 可选 `SUPPORT_EMAIL`：学生忘记密码时显示的管理员联系邮箱；系统不自动发送邮件。
-- 单独保存并异地备份认证加密主密钥、HMAC 密钥和备份解密密钥。
-
-`UPSTREAM_URL` 生产模式固定为 `https://api.deepseek.com/v1`。没有配置价格时就绪检查返回 503，收费 API 拒绝未计价模型，但管理员仍可登录初始化。新成员预算默认 0。不要把演示环境切一个环境变量就当成生产：演示学生、Key、模拟凭证和价格必须与生产隔离。
+配置生产 HTTPS `PUBLIC_URL`、各组上游凭证、允许模型、预算、频率/并发与输出上限。生产上游固定为 `https://api.deepseek.com/v1`。通过受保护管理页面录入服务器专用官方 Key，并核验计价；新成员默认预算为 0。`SUPPORT_EMAIL` 可设置管理员联系邮箱，系统不自动发信。
 
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-应用启动自动执行 Alembic 迁移。网关按 `GATEWAY_BIND_HOST` 发布 18081；生产同机反向代理建议使用 `127.0.0.1`。PostgreSQL、Redis 在内部网络，无主机发布端口。容器重启策略为 unless-stopped；主机 Docker 守护进程需按服务器既有策略开机启动。
+生产命令不叠加 `compose.demo.yaml`。在已有实例更新时沿用该实例实际使用的配置文件组合，不直接套用其他环境的命令。应用启动执行 Alembic 迁移；同时发布 `gateway/` 和 `migrations/`，仅 ORM 建表不会安装准入函数。
 
-镜像锁定 PostgreSQL/Redis/Python 摘要，依赖锁定并按哈希安装。容器用户默认取初始化时的主机 UID/GID，以读取 0600 secrets；迁移部署机器时确认所有权。网关根文件系统只读、删除全部 capabilities；仅 `/tmp` 为临时可写。
+网关必须单进程/单副本，不能增加 workers。镜像、依赖和哈希已锁定；运行用户默认采用初始化时主机 UID/GID，迁移主机需确认秘密文件所有权。容器根文件系统只读、删除 capabilities，只有 `/tmp` 临时可写。认证加密、HMAC 和备份解密密钥须独立保管并异地备份。
 
-## HTTPS 入口
+## 网络入口
 
-`proxy/nginx.conf.example` 是待集成模板，不能替换当前服务器站点。它精确放行 `/v1/models` 与 `/v1/chat/completions`，管理路径默认 deny all，待填写实际访问范围。部署时配置正确的证书路径、域名、管理员允许网段；其余路径 404。把头配置复制到模板引用的目标路径。
+`GATEWAY_BIND_HOST` 是监听地址；`PUBLIC_URL` 必须与浏览器实际使用的协议、主机和端口一致，否则来源校验返回 `invalid_origin`。`0.0.0.0` 不是浏览器访问地址。局域网模拟示例：
 
-流式路径关闭缓冲、缓存和 gzip，使用 HTTP/1.1，读取超时 240 秒。边缘覆盖 X-Forwarded-For，应用仅信任 `TRUSTED_PROXIES` 中明确的代理地址。Docker 容器中看到的代理来源可能是 bridge 网关地址，须用实际网络核验，不能仅填 127.0.0.1 后假定可信链正确。
+```dotenv
+GATEWAY_BIND_HOST=0.0.0.0
+GATEWAY_PORT=18081
+PUBLIC_URL=http://服务器实际IP:18081
+```
 
-生产管理页面按管理员网段限制访问；浏览器会话在生产模式使用 Secure Cookie。HTTP 只用于 demo 环境；当前校园网 IP 入口用于模拟验证，生产模式仍强制 HTTPS。
+修改后使用该实例对应的 Compose 配置重建 gateway。正式同机反向代理可保持 `127.0.0.1` 监听，使用客户端信任的 HTTPS。生产校验要求 HTTPS，不强制域名；IP 证书也需被客户端正确验证，不能通过关闭校验长期运行。
 
-## 就绪与检查
+校园私网是否可从校外访问取决于路由，不由域名或 API Key 解决。可以采用学校允许的客户端 VPN、受控组网、公网部署或获准的加密隧道；需验证客户端能访问网关 TCP 端口，网页型 VPN 不一定支持 SDK。运行客户端期间需要持续保持网络可达。
 
-- `/health/live`：进程存活，不检查付费上游。
-- `/health/ready`：数据库、Redis 和至少一个有效价格配置；不代表官方 Key 可用。
-- 管理 `/admin/api/metrics`：请求/拒绝、依赖与上游错误、当前并发、待核对数量和金额。
+`proxy/nginx.conf.example` 是待集成模板，不要覆盖现有 80/443 服务。配置真实证书、管理网段和 `proxy/lab-gateway-headers.conf`；模板开放文本 API 与学生入口，管理路径默认 deny all，其余路径 404。流式路径禁用缓冲、缓存和 gzip，读取超时 240 秒。`TRUSTED_PROXIES` 只填写实际可信代理地址，容器看到的来源可能是 bridge 网关。
 
-官方连通测试需要管理员录入真实凭证后，明确限定输出与次数；本次开发没有发送真实付费请求。确认真实接入、HTTPS、来源 IP 和账单后再安排试点与旧凭证撤销。
+## 上线与回滚
 
-## 学生入口升级
-
-本次增加迁移 `7ac260319e01`：为成员增加自助 Key 的到期上限，创建学生账号与独立会话表。已有身份、Key、账目与预算保留；已有成员的到期上限由现有 Key 的权限边界回填。升级前已执行加密数据库备份。新生导入不创建 Key，学生改密后自行领取。
-
-对现有模拟环境运行 `.venv/bin/python scripts/seed_student_demo.py`，可补齐三名模拟学生，每人每月 10 元，重复执行不重置账号。部署后验证：`.venv/bin/python scripts/student_browser_check.py`（仅模拟环境），结果见 `student-browser-results.json`。
-
-校外部署方案、IP/HTTPS 与密码策略说明见 [访问与账户说明](access-and-accounts.md)。本次未安装 VPN、隧道或云端中转。
-
-## 延迟优化升级（2026-11-14）
-
-迁移 `9d31b47fa820` 新增3个请求查询索引及2个准入数据库函数，保留全部既有身份、预算和账目。需要同时发布 `gateway/` 与 `migrations/`；仅用 ORM 建表不能代替 Alembic。大数据部署应单独评估建索引的维护时间，本次既有模拟库158条请求，已完成恢复副本上的升级、降级和再次升级，应用数据逐行一致。
-
-当前演示网关已更新，地址及MOCK上游不变。升级前加密备份为 `backups/20261114T081819Z-database.enc`，旧镜像保留为 `lab-llm-gateway:pre-latency-20261114`。新版仍为单进程，不支持直接增加 workers 或副本。
-
-本次迁移是增量函数/索引变更。若需回滚本次升级，先停止唯一网关并核对未结束请求，使用**新镜像**执行 `alembic downgrade 7ac260319e01`，再将旧镜像恢复到服务标签并启动；该降级不删除请求或账目。不要让新旧锁顺序的进程同时服务，也不要把旧数据库备份直接覆盖升级后已发生的调用。后续再有迁移时，需重新评估回滚路径。
+- `/health/live` 仅说明进程存活；`/health/ready` 检查数据库、Redis 与有效价格，不探测付费上游。没有价格时 ready 为 503，但管理员可登录初始化。
+- 管理操作和学生流程分别见[管理员指南](admin-guide.md)、[客户端指南](client-guide.md)。禁止把模拟账号、预算、价格和上游凭证直接作为生产配置。
+- 上线前备份数据和秘密，在隔离恢复库验证迁移、流式代理与权限；真实供应商试点应明确调用次数和输出上限。
+- 记录镜像摘要及 Alembic revision。回滚按版本评估数据兼容，历史某一次迁移的 downgrade 命令不能作为通用回滚命令。详细步骤见[运维说明](operations.md#升级和回滚)。

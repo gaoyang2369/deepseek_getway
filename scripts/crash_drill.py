@@ -14,54 +14,57 @@ from pathlib import Path
 import httpx
 import psycopg
 from psycopg import sql
+from support import artifact, require_isolated_dependencies
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 async def main():
+    require_isolated_dependencies()
     env = os.environ.copy()
     base_url = env["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://")
     name = "lab_gateway_crash_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     with psycopg.connect(base_url, autocommit=True) as db:
         db.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    env["DATABASE_URL"] = env["DATABASE_URL"].rsplit("/", 1)[0] + "/" + name
-    env["REDIS_URL"] = env["REDIS_URL"].rsplit("/", 1)[0] + "/14"
-    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], env=env, check=True)
-
-    def start():
-        return subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "gateway.main:create_app",
-                "--factory",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "19081",
-                "--no-access-log",
-                "--no-proxy-headers",
-            ],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-    async def wait_ready(client, process):
-        for _ in range(100):
-            if process.poll() is not None:
-                raise RuntimeError("Isolated gateway exited before readiness")
-            try:
-                if (await client.get("/health/live")).status_code == 200:
-                    return
-            except httpx.HTTPError:
-                pass
-            await asyncio.sleep(0.05)
-        raise RuntimeError("Isolated gateway did not start")
-
-    process = start()
+    process = None
     try:
+        env["DATABASE_URL"] = env["DATABASE_URL"].rsplit("/", 1)[0] + "/" + name
+        env["REDIS_URL"] = env["REDIS_URL"].rsplit("/", 1)[0] + "/14"
+        subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], env=env, check=True)
+
+        def start():
+            return subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "gateway.main:create_app",
+                    "--factory",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "19081",
+                    "--no-access-log",
+                    "--no-proxy-headers",
+                ],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+        async def wait_ready(client, process):
+            for _ in range(100):
+                if process.poll() is not None:
+                    raise RuntimeError("Isolated gateway exited before readiness")
+                try:
+                    if (await client.get("/health/live")).status_code == 200:
+                        return
+                except httpx.HTTPError:
+                    pass
+                await asyncio.sleep(0.05)
+            raise RuntimeError("Isolated gateway did not start")
+
+        process = start()
         async with httpx.AsyncClient(
             base_url="http://127.0.0.1:19081", trust_env=False, timeout=10
         ) as client:
@@ -106,6 +109,8 @@ async def main():
                 json={
                     "operation_id": str(uuid.uuid4()),
                     "name": "崩溃模拟",
+                    "kind": "service",
+                    "owner": "isolated crash verification",
                     "student_number": "mock-crash-001",
                     "team_id": team_id,
                     "models": ["lab-chat"],
@@ -155,12 +160,14 @@ async def main():
                 "restart_seconds": round(time.perf_counter() - at, 3),
                 "paid_calls": 0,
             }
-            (ROOT / "docs/crash-results.json").write_text(json.dumps(report, indent=2) + "\n")
+            artifact("crash-results.json").write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report))
     finally:
-        if process.poll() is None:
+        if process is not None and process.poll() is None:
             process.terminate()
             process.wait(timeout=15)
+        with psycopg.connect(base_url, autocommit=True) as db:
+            db.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
 if __name__ == "__main__":
