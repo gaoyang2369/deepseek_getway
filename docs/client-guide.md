@@ -2,6 +2,10 @@
 
 登录学生入口 `/student`，首次修改密码后领取所属项目组的个人 Key。登录后的“接入指南”按所选项目组、模型和终端环境生成可复制示例，覆盖聊天客户端、Python、Node.js、Agent 项目、DeepSeek Harness 和 HTTP 验证。先领取 Key，再选择同一组的模型；网页登录密码不是 API Key。不同项目组的 Key 分别归因和计量。
 
+首次登录后，改密页自动带入刚才验证成功的登录密码，无需重复输入；该密码只临时保留在当前页面，改密成功、退出登录或离开页面时清除，不写入浏览器存储。刷新后若需继续改密，应重新输入当前密码。学生新密码最少 8 个字符，最多 128 个字符；登录、当前密码、新密码及确认框均提供“显示/隐藏”按钮。
+
+学生项目组卡片只显示“本月已用（已结算）”，按北京时间自然月、请求发起时间汇总本组个人调用费用。即使后台采用按日限额，页面也显示整月累计；待核对请求在结算后计入原请求月份。学生页面和个人资料接口不展示预算总额、预留或剩余额度，后台预算限制照常生效。
+
 Key 仅在领取或轮换成功时完整显示一次。保存后可以退出网页继续调用，遗失时由学生本人轮换。管理员重置登录密码会使该学生旧登录会话和所有旧 Key 失效，学生改密后重新领 Key。校外调用需要运行客户端或 Harness 的设备能访问网关，例如保持校园 VPN 连接；网络不可达时，领取 Key 也无法调用。入口部署和校外访问见[部署说明](deployment.md#网络入口)。
 
 ## 接口格式与范围
@@ -130,12 +134,20 @@ console.log(reply.choices[0].message.content);
 先按 [官方项目说明](https://github.com/deepseek-ai/deepseek-harness) 安装并启动。下面采用官方的 [自定义模型 API 配置流程](https://deepseek-harness.github.io/deepseek-harness/guide/providers)，不通过默认的 DeepSeek 官网提供商登录。
 
 1. 打开“设置 → 模型 → 添加模型提供商 → 自定义模型 API”。
-2. Provider ID 填 `lab-gateway`，显示名称填“实验室网关”。
-3. API 协议选择 **OpenAI Chat Completions**（`openai-completions`）；Base URL 填学生页面的 `/v1` 地址，API Key 填本组个人 Key。
-4. 选择“获取可用模型”，或手动添加当前组的模型 ID；输入类型只选 `text`。
-5. 基础对话保存后即可使用；需要配置思考、重试或工具回放时，可将下方兼容配置合并到当前 profile 的 `cordis.patch.yml`。保留已有其他提供商与字段，不要直接覆盖整个文件。常规 `dsh web` 的路径是 `$DSH_HOME/profiles/web/cordis.patch.yml`。
-6. 使用环境变量凭据时，在启动 Harness 的终端设置 `LAB_LLM_API_KEY` 再运行 `dsh web`。若使用模型设置页保存的 Key，保留该页面生成的 `apiKeyEnv` 凭据引用，不要用下面的环境变量引用覆盖它。
-7. 新建会话，选 `lab-gateway` 下的模型，先发短消息，再试读项目文件或终端工具。
+2. Provider ID 填 `lab-gateway`，显示名称可填“实验室网关”；API 协议选择 **OpenAI Chat Completions**，Base URL 填学生页面的 `/v1` 地址，API Key 填本组个人 Key。
+3. 点击“获取可用模型”，选择本组模型并保存。
+4. 在会话中选择 `lab-gateway` 下的模型，发送一条消息验证。
+
+**完成这四步即可使用。界面已保存 Key 时，不需要再设置终端环境变量、执行启动命令或手动修改配置文件。**学生页面将下面的内容默认折叠在“高级配置（可选，界面接入无需操作）”中。
+
+<details>
+<summary>高级配置（可选，界面接入无需操作）</summary>
+
+只在需要手动配置、使用环境变量凭据或调整高级参数时参考。输入类型只选 `text`；获取模型列表失败时，也可手动添加当前组的模型 ID。
+
+`dsh web` 是启动 Harness Web 界面的命令，不是填写网关配置后的额外步骤。如果主动选择环境变量凭据，在启动 Harness 的终端设置 `LAB_LLM_API_KEY` 后启动。若使用设置界面保存的 Key，保留该界面生成的凭据引用，不要用下面的 `apiKeyEnv` 覆盖它。
+
+手动配置时合并到当前 profile 的 `cordis.patch.yml`，保留其他提供商与字段，不要覆盖整个文件。常规 `dsh web` 的路径是 `$DSH_HOME/profiles/web/cordis.patch.yml`。
 
 ```yaml
 # 将本组实际地址、模型和输出上限填入；学生页面会自动生成。
@@ -175,6 +187,8 @@ console.log(reply.choices[0].message.content);
 本地文件、终端、函数工具与模型请求是不同环节。此网关可承载相应的文本/函数调用请求，但未开放 DeepSeek 官网额外的上传、图片、联网和 Responses API。不要直接按默认官网能力开启这些功能。
 
 验证范围：Python、HTTP 与工具调用可用模拟上游验证；Node.js 示例做语法检查；Harness 配置按官方字段和本网关协议适配，尚未完成 Harness 完整应用的端到端验收。
+
+</details>
 
 ## 排错
 

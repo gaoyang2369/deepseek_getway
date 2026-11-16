@@ -4,6 +4,7 @@ import {
   overviewView,
   budgetsView,
   requestsView,
+  rejectionsView,
   eventsView,
   auditView,
 } from "./reports.js";
@@ -19,7 +20,8 @@ const names = {
   budgets: "预算账本",
   requests: "请求记录",
   prices: "模型与计价",
-  events: "异常事件",
+  events: "告警与待办",
+  rejections: "拒绝记录",
   audit: "管理审计",
 };
 const views = {
@@ -28,6 +30,7 @@ const views = {
   members: membersView,
   budgets: budgetsView,
   requests: requestsView,
+  rejections: rejectionsView,
   prices: pricesView,
   events: eventsView,
   audit: auditView,
@@ -37,16 +40,32 @@ async function load() {
   const loading = ++loadVersion,
     currentView = view;
   notice("");
-  $("#view-title").textContent = names[view];
+  const isRecord = ["requests", "rejections", "events", "audit"].includes(view);
+  $("#view-title").textContent = isRecord
+    ? "记录与追溯 · " + names[view]
+    : names[view];
+  $("#record-tabs").hidden = !isRecord;
   document
     .querySelectorAll("nav button")
-    .forEach((b) => b.classList.toggle("selected", b.dataset.view === view));
+    .forEach((b) =>
+      b.classList.toggle(
+        "selected",
+        b.dataset.view === view || (b.dataset.view === "records" && isRecord),
+      ),
+    );
   const c = $("#content");
   c.replaceChildren(node("p", "加载中…", "muted"));
-  const cache = {};
+  const cache = {
+    navigate: async (next) => {
+      view = next;
+      await load();
+    },
+  };
   [cache.teamHistory, cache.memberHistory, cache.config] = await Promise.all([
     api("/teams?include_deleted=true"),
-    api("/memberships?include_deleted=true"),
+    ["members", "students"].includes(currentView)
+      ? Promise.resolve([])
+      : api("/memberships?include_deleted=true"),
     api("/config"),
   ]);
   cache.teams = cache.teamHistory.filter((t) => !t.deleted_at);
@@ -76,12 +95,15 @@ $("#login").addEventListener("submit", async (e) => {
     b.disabled = false;
   }
 });
-$("#nav").addEventListener("click", (e) => {
+function navigate(e) {
   if (e.target.dataset.view) {
-    view = e.target.dataset.view;
+    view =
+      e.target.dataset.view === "records" ? "requests" : e.target.dataset.view;
     load().catch((e) => showError(e));
   }
-});
+}
+$("#nav").addEventListener("click", navigate);
+$("#record-tabs").addEventListener("click", navigate);
 $("#refresh").addEventListener("click", () =>
   load().catch((e) => showError(e)),
 );

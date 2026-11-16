@@ -133,6 +133,8 @@ async def test_every_admin_module_loads_with_populated_data(admin, live_server, 
         "events",
         "audit",
     ):
+        if view in ("requests", "rejections", "events", "audit"):
+            await page.locator('#nav button[data-view="records"]').click()
         await page.locator(f'nav button[data-view="{view}"]').click()
         await page.locator("#content table").first.wait_for()
         await expect(page.locator("#notice")).to_be_empty()

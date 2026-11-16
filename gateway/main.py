@@ -74,8 +74,9 @@ def create_app(settings=None):
         "upstream_errors": 0,
         "database_failures": 0,
         "settlement_failures": 0,
+        "rejection_record_failures": 0,
     }
-    app.add_middleware(Guard, settings=settings, metrics=app.state.metrics)
+    app.add_middleware(Guard, settings=settings, metrics=app.state.metrics, factory=factory)
 
     install_error_handlers(app, settings, factory)
     install_pages(app, settings)

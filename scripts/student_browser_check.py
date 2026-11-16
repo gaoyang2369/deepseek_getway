@@ -36,10 +36,12 @@ async def main():
         await admin.get_by_role("button", name="＋ 批量导入学号").click()
         await admin.locator('select[name="team_id"]').select_option(identity["team_id"])
         await admin.locator('textarea[name="roster"]').fill(number + ",浏览器模拟同学")
+        await admin.locator('input[name="budget"]').fill("10")
         await admin.locator('select[name="initial_password_mode"]').select_option("student_number")
         async with admin.expect_response(lambda r: r.url.endswith("/students/import")) as imported:
             await admin.locator("#modal-submit").click()
         assert (await imported.value).status == 201
+        await admin.locator("#close-modal").click()
         await admin.locator("#modal").wait_for(state="hidden")
         await admin.get_by_role("cell", name=number, exact=True).wait_for()
         context = await browser.new_context(viewport={"width": 1280, "height": 1000})
@@ -49,13 +51,13 @@ async def main():
         await page.goto(base + "/")
         await page.locator('#student-login-form input[name="username"]').fill(number)
         await page.locator('#student-login-form input[name="password"]').fill(number)
-        await page.locator("#student-login-form button").click()
+        await page.locator('#student-login-form button[type="submit"]').click()
         await page.locator("#student-password").wait_for(state="visible")
         assert not await page.locator("#student-profile").is_visible()
-        await page.locator('input[name="current_password"]').fill(number)
+        assert await page.locator('input[name="current_password"]').input_value() == number
         await page.locator('input[name="new_password"]').fill(new_password)
         await page.locator('input[name="confirmation"]').fill(new_password)
-        await page.locator("#student-password-form button").first.click()
+        await page.locator('#student-password-form button[type="submit"]').click()
         await page.locator("#student-profile").wait_for(state="visible")
         await page.get_by_role("button", name="领取个人 Key").click()
         await page.locator("#student-key-dialog").wait_for(state="visible")
@@ -93,7 +95,7 @@ async def main():
             ).status_code == 401
             await page.locator('#student-login-form input[name="username"]').fill(number)
             await page.locator('#student-login-form input[name="password"]').fill(temporary)
-            await page.locator("#student-login-form button").click()
+            await page.locator('#student-login-form button[type="submit"]').click()
             await page.locator("#student-password").wait_for(state="visible")
         assert not page_errors, page_errors
         await browser.close()

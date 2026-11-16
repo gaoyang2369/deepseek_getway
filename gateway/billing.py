@@ -70,20 +70,36 @@ async def event(db, kind, team_id=None, member_id=None, detail=None, scope=None)
     # One event per subject and hour, or a supplied persistent budget period.
     bucket = scope or now().strftime("%Y%m%d%H")
     dedup = hashlib.sha256(f"{kind}:{team_id}:{member_id}:{bucket}".encode()).hexdigest()
-    await db.execute(
-        insert(Event)
-        .values(
-            id=uid(),
-            dedup=dedup,
-            kind=kind,
-            team_id=team_id,
-            membership_id=member_id,
-            detail=detail or {},
-            resolved=False,
-            created_at=now(),
-        )
-        .on_conflict_do_nothing(index_elements=["dedup"])
+    stamp = now()
+    statement = insert(Event).values(
+        id=uid(),
+        dedup=dedup,
+        kind=kind,
+        team_id=team_id,
+        membership_id=member_id,
+        detail=detail or {},
+        resolved=False,
+        created_at=stamp,
+        last_seen_at=stamp,
+        occurrences=1,
     )
+    if scope:
+        statement = statement.on_conflict_do_nothing(index_elements=["dedup"])
+    else:
+        statement = statement.on_conflict_do_update(
+            index_elements=["dedup"],
+            set_={
+                "last_seen_at": func.greatest(Event.last_seen_at, stamp),
+                "created_at": func.least(Event.created_at, stamp),
+                "occurrences": Event.occurrences + 1,
+                "detail": detail or {},
+                "resolved": False,
+                "resolved_at": None,
+                "resolved_by": None,
+                "resolution": None,
+            },
+        )
+    await db.execute(statement)
 
 
 async def get_period(db, kind, owner, at):
@@ -124,14 +140,24 @@ async def settle(
     total_ms=None,
     manual_cost=None,
     manual_audit=None,
+    outcome=None,
     thresholds=(80, 100),
 ):
     async with factory() as db, db.begin():
         call = await db.scalar(select(Call).where(Call.id == request_id).with_for_update())
         if call.status == "settled":
             return False
+        was_pending = call.status == "pending"
         normalized = parse_usage(usage)
-        call.ended_at = now()
+        if manual_audit is None:
+            call.outcome = outcome or {
+                "not_sent": "not_sent",
+                "client_disconnected": "client_disconnected",
+                "upstream_protocol_error": "upstream_failure",
+                "stream_interrupted": "upstream_failure",
+            }.get(reason, "unknown")
+            call.outcome_reason = reason if call.outcome != "success" else None
+            call.ended_at = now()
         if upstream_status is not None:
             call.upstream_status = upstream_status
         if isinstance(upstream_id, str):
@@ -208,6 +234,21 @@ async def settle(
         call.cost, call.usage, call.status, call.reason = actual, normalized, "settled", reason
         if manual_audit:
             db.add(Audit(**manual_audit))
+        if was_pending:
+            await db.execute(
+                update(Event)
+                .where(
+                    Event.kind == "pending_usage",
+                    Event.detail["request_id"].astext == call.id,
+                    Event.resolved.is_(False),
+                )
+                .values(
+                    resolved=True,
+                    resolved_at=now(),
+                    resolved_by=manual_audit["actor"] if manual_audit else "system",
+                    resolution=manual_audit["detail"]["reason"] if manual_audit else "费用已结算",
+                )
+            )
         return True
 
 
@@ -218,7 +259,13 @@ async def recover(factory):
         await db.execute(
             update(Call)
             .where(Call.status.in_(("reserved", "running")))
-            .values(status="pending", reason="process_interrupted", ended_at=now())
+            .values(
+                status="pending",
+                outcome="unknown",
+                reason="process_interrupted",
+                outcome_reason="process_interrupted",
+                ended_at=now(),
+            )
         )
         count = await db.scalar(select(func.count()).select_from(Call).where(Call.status == "pending"))
         if count:

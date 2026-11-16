@@ -89,6 +89,7 @@ async def chat(data: Chat, request: Request):
     app = request.app
     settings = app.state.settings
     started = request.state.request_started
+    request.state.requested_model = data.model
     if request.query_params:
         fail(400, "query_parameters_not_supported")
     body = data.model_dump(exclude_none=True)
@@ -108,6 +109,7 @@ async def chat(data: Chat, request: Request):
         request.state.request_id,
         client_ip(request, settings),
         started,
+        request.state,
     )
 
     async def finish_call(**kwargs):
@@ -158,6 +160,7 @@ async def chat(data: Chat, request: Request):
         status = exc.status_code if isinstance(exc, APIStatusError) else None
         await finish_call(
             reason="upstream_error",
+            outcome="upstream_failure" if status is not None else "unknown",
             upstream_status=status,
             total_ms=round((time.perf_counter() - started) * 1000),
         )
@@ -181,6 +184,7 @@ async def chat(data: Chat, request: Request):
             usage=result.get("usage"),
             upstream_id=result.get("id"),
             upstream_status=200,
+            outcome="success",
             total_ms=round((time.perf_counter() - started) * 1000),
         )
         return JSONResponse(result)
@@ -188,6 +192,8 @@ async def chat(data: Chat, request: Request):
     async def generate():
         usage, upstream_id, first = None, None, None
         reason = "missing_usage"
+        outcome = "unknown"
+        completed = False
         try:
             async for chunk in with_heartbeats(response, settings.stream_heartbeat_seconds):
                 if chunk is None:
@@ -198,8 +204,12 @@ async def chat(data: Chat, request: Request):
                 final_layout = not payload.get("choices") or any(
                     choice.get("finish_reason") is not None for choice in payload.get("choices", [])
                 )
+                completed = completed or any(
+                    choice.get("finish_reason") is not None for choice in payload.get("choices", [])
+                )
                 if final_layout and parse_usage(payload.get("usage")) is not None:
                     usage = payload["usage"]
+                    completed = True
                 if first is None:
                     for choice in payload.get("choices", []):
                         delta = choice.get("delta", {})
@@ -208,11 +218,14 @@ async def chat(data: Chat, request: Request):
                             break
                 yield "data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n\n"
             yield "data: [DONE]\n\n"
+            outcome = "success" if completed else "unknown"
         except asyncio.CancelledError:
             reason = "client_disconnected"
+            outcome = "client_disconnected"
             raise
         except Exception:
             reason = "stream_interrupted"
+            outcome = "upstream_failure"
             app.state.metrics["upstream_errors"] += 1
             yield "data: " + json.dumps({"error": {"message": reason, "request_id": call.id}}) + "\n\n"
         finally:
@@ -221,7 +234,8 @@ async def chat(data: Chat, request: Request):
             finally:
                 await finish_call(
                     usage=usage,
-                    reason=None if usage else reason,
+                    reason=None if outcome == "success" and usage else reason,
+                    outcome=outcome,
                     upstream_id=upstream_id,
                     upstream_status=200,
                     first_delta_ms=first,

@@ -12,7 +12,8 @@ const operationId = () =>
   ).join("");
 const money = (v) => "¥" + (Number(v || 0) / 1e6).toFixed(6);
 let csrf = sessionStorage.getItem("lab_student_csrf") || "",
-  profile = null;
+  profile = null,
+  firstLoginPassword = null;
 const errors = {
   invalid_login: "学号或密码错误，或账号尚未开通。",
   student_rate_limit: "尝试过于频繁，请稍后再试。",
@@ -55,8 +56,47 @@ function clearKey() {
   $("#student-key-value").textContent = "";
   $("#student-key-base").textContent = "";
 }
+function maskPasswords(form) {
+  form.querySelectorAll(".password-toggle").forEach((button) => {
+    document.getElementById(button.dataset.passwordTarget).type = "password";
+    button.textContent = "显示";
+    button.setAttribute("aria-label", "显示" + button.dataset.passwordLabel);
+    button.setAttribute("aria-pressed", "false");
+  });
+}
+function clearPasswordForm() {
+  const form = $("#student-password-form");
+  form.reset();
+  maskPasswords(form);
+  const current = form.elements.current_password;
+  current.readOnly = false;
+  current.autocomplete = "current-password";
+  $("#current-password-hint").textContent = "";
+}
+document.querySelectorAll(".password-toggle").forEach((button) => {
+  button.addEventListener("click", () => {
+    const input = document.getElementById(button.dataset.passwordTarget);
+    const visible = input.type === "password";
+    input.type = visible ? "text" : "password";
+    button.textContent = visible ? "隐藏" : "显示";
+    button.setAttribute(
+      "aria-label",
+      (visible ? "隐藏" : "显示") + button.dataset.passwordLabel,
+    );
+    button.setAttribute("aria-pressed", String(visible));
+  });
+});
+window.addEventListener("pagehide", () => {
+  firstLoginPassword = null;
+  clearPasswordForm();
+  $("#student-login-form").reset();
+  maskPasswords($("#student-login-form"));
+});
 function loginScreen() {
   clearKey();
+  firstLoginPassword = null;
+  clearPasswordForm();
+  maskPasswords($("#student-login-form"));
   profile = null;
   sessionStorage.removeItem("lab_student_csrf");
   csrf = "";
@@ -86,6 +126,15 @@ function session(data) {
 }
 function passwordScreen() {
   clearKey();
+  clearPasswordForm();
+  const supplied = profile?.must_change_password && firstLoginPassword !== null;
+  const current = $("#student-password-form").elements.current_password;
+  if (supplied) current.value = firstLoginPassword;
+  current.readOnly = !!supplied;
+  current.autocomplete = supplied ? "off" : "current-password";
+  $("#current-password-hint").textContent = supplied
+    ? "已自动带入本次登录密码，无需再次输入。"
+    : "请输入当前登录密码；新密码与确认新密码需保持一致。";
   $("#student-login").hidden = true;
   $("#student-profile").hidden = true;
   $("#student-password").hidden = false;
@@ -102,6 +151,8 @@ async function load() {
     passwordScreen();
     return;
   }
+  firstLoginPassword = null;
+  clearPasswordForm();
   $("#student-password").hidden = true;
   $("#student-profile").hidden = false;
   $("#student-title").textContent =
@@ -114,19 +165,7 @@ async function load() {
     panel.append(
       el("h2", member.team),
       el("p", "模型：" + member.models.join("、")),
-      el(
-        "p",
-        "个人预算：" +
-          money(member.limit) +
-          " / " +
-          (member.period === "month" ? "自然月" : "自然日") +
-          "；已用 " +
-          money(member.spent) +
-          "；预留 " +
-          money(member.reserved) +
-          "；可用 " +
-          money(member.available),
-      ),
+      el("p", "本月已用：" + money(member.spent) + "（已结算）"),
     );
     if (member.key_expires_at)
       panel.append(
@@ -193,10 +232,16 @@ $("#student-login-form").addEventListener("submit", async (e) => {
   b.disabled = true;
   notice("");
   try {
-    session(
-      await api("/login", "POST", Object.fromEntries(new FormData(e.target))),
-    );
+    const credentials = Object.fromEntries(new FormData(e.target));
+    const result = await api("/login", "POST", credentials);
+    session(result);
+    // Keep the verified initial password only in this page's memory until changed.
+    firstLoginPassword = result.must_change_password
+      ? credentials.password
+      : null;
+    credentials.password = "";
     e.target.reset();
+    maskPasswords(e.target);
     await load();
   } catch (err) {
     notice(err.message);
@@ -212,12 +257,19 @@ $("#student-password-form").addEventListener("submit", async (e) => {
     return;
   }
   delete data.confirmation;
+  // Ignore password-manager overwrites during the initial change: use the
+  // exact password verified by the immediately preceding login.
+  if (profile?.must_change_password && firstLoginPassword !== null) {
+    data.current_password = firstLoginPassword;
+    e.target.elements.current_password.value = firstLoginPassword;
+  }
   const b = e.submitter;
   b.disabled = true;
   notice("");
   try {
     session(await api("/password", "POST", data));
-    e.target.reset();
+    firstLoginPassword = null;
+    clearPasswordForm();
     await load();
     notice("密码已修改，请妥善保管。");
   } catch (err) {

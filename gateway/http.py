@@ -1,15 +1,14 @@
 import logging
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from .billing import event
-from .keys import authenticate
 from .models import uid
+from .observability import record_rejection
 from .schemas import chat_validation_details
 
 log = logging.getLogger("lab_gateway")
@@ -43,8 +42,8 @@ class SafeFastAPI(FastAPI):
 class Guard:
     """Bound memory before JSON parsing; attach server request IDs and safe headers."""
 
-    def __init__(self, app, settings, metrics):
-        self.app, self.settings, self.metrics = app, settings, metrics
+    def __init__(self, app, settings, metrics, factory):
+        self.app, self.settings, self.metrics, self.factory = app, settings, metrics, factory
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -56,7 +55,14 @@ class Guard:
 
         async def safe_send(message):
             if message["type"] == "http.response.start":
-                headers = list(message.get("headers", []))
+                if (
+                    scope["path"] == "/v1/chat/completions"
+                    and scope["method"] == "POST"
+                    and message["status"] >= 400
+                    and not scope["state"].get("admitted")
+                ):
+                    await record_rejection(Request(scope), self.settings, self.factory, message["status"])
+                headers = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"x-request-id"]
                 headers.extend(
                     [
                         (b"x-request-id", request_id.encode()),
@@ -80,6 +86,7 @@ class Guard:
                     return
                 body.extend(msg.get("body", b""))
                 if len(body) > self.settings.max_body:
+                    scope["state"]["rejection_reason"] = "request_too_large"
                     return await JSONResponse(
                         {
                             "error": {
@@ -107,6 +114,7 @@ class Guard:
 
 def install_error_handlers(app, settings, factory):
     def error(request, status, message, details=None):
+        request.state.rejection_reason = message
         counts = app.state.metrics["rejections"]
         counts[message] = counts.get(message, 0) + 1
         payload = {"message": message, "type": "gateway_error", "request_id": request.state.request_id}
@@ -120,21 +128,18 @@ def install_error_handlers(app, settings, factory):
 
     @app.exception_handler(HTTPException)
     async def http_error(request, exc):
-        if exc.status_code in (402, 429):
-            try:
-                async with factory() as db, db.begin():
-                    key, member, _, team = await authenticate(
-                        db, request.headers.get("authorization"), settings
-                    )
-                    await event(db, str(exc.detail), team.id, member.id)
-            except Exception:
-                pass
+        if isinstance(exc.detail, dict) and "message" in exc.detail:
+            return error(request, exc.status_code, exc.detail["message"], exc.detail.get("details"))
         return error(request, exc.status_code, str(exc.detail))
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
         # Pydantic's default response echoes inputs, including passwords and API keys.
         if request.url.path == "/v1/chat/completions":
+            if isinstance(exc.body, dict):
+                model = exc.body.get("model")
+                if isinstance(model, str) and 0 < len(model) <= 128:
+                    request.state.requested_model = model
             details = chat_validation_details(exc.errors())
             log.warning(
                 "request_validation_failed request_id=%s details=%s", request.state.request_id, details
@@ -161,4 +166,12 @@ def install_error_handlers(app, settings, factory):
         log.error(
             "internal_error request_id=%s exception_type=%s", request.state.request_id, type(exc).__name__
         )
-        return error(request, 500, "internal_error")
+        response = error(request, 500, "internal_error")
+        # Starlette's generic 500 handler sits outside Guard's response wrapper.
+        if (
+            request.url.path == "/v1/chat/completions"
+            and request.method == "POST"
+            and not getattr(request.state, "admitted", False)
+        ):
+            await record_rejection(request, settings, factory, 500)
+        return response

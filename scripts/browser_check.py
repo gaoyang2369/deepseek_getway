@@ -30,10 +30,12 @@ async def main(base_url):
         await page.locator('input[name="password"]').fill(admin_password())
         await page.locator("#login button").click()
         await page.locator("#console").wait_for(state="visible")
-        await page.get_by_text("累计请求", exact=True).wait_for()
+        await page.get_by_text("已准入调用", exact=True).wait_for()
         await page.screenshot(path=str(artifact("admin-preview.png")), full_page=True)
         visited = []
         for name in ("teams", "members", "budgets", "requests", "prices", "events", "audit", "overview"):
+            if name in ("requests", "rejections", "events", "audit"):
+                await page.locator('#nav button[data-view="records"]').click()
             await page.locator(f'nav button[data-view="{name}"]').click()
             await page.locator("#content > p.muted").wait_for(state="hidden")
             assert not await page.locator("#notice").inner_text(), f"View {name} displayed an error"

@@ -78,6 +78,14 @@ GATEWAY_COMPOSE_PROJECT=lab-gateway-test .venv/bin/python scripts/local.py .venv
 
 预算消费事件阈值可通过 `BUDGET_THRESHOLDS` 配置为逗号分隔的百分比（默认 `80,100`，范围1–100）；事件按预算周期去重。更改受限配置后重启唯一网关生效，不会变更资金账本。
 
+## 记录与追溯升级
+
+发布时同时更新 `gateway/` 与 `migrations/`，启动前执行 `alembic upgrade head`（容器启动流程已执行）。`c42e8a910d65` 增加独立调用结果、拒绝记录及告警处理字段，并更新准入函数以返回命中的限额归属。历史费用与预算不变；历史调用结果保守标为未知，历史告警次数从 1 起算。不要只替换静态页面或只更新 ORM。
+
+`GET /admin/api/metrics` 的 `rejection_record_failures` 是本进程拒绝记录写入失败次数；对应安全日志为 `rejection_record_failed request_id=...`。数据库故障期间拒绝记录可能缺失，进程重启会重置此运行指标，应结合服务器日志核查。拒绝持久化失败不改变原拒绝响应。
+
+`scripts/housekeeping.py` 同时清理调用和拒绝记录的过期原始 IP，保留用量、拒绝元数据和审计历史。新增拒绝逐次落库，应将该表纳入原有数据库备份和容量监控。
+
 ## 隔离验证工具
 
 开发/故障演练必须使用独立 Compose 项目；禁止将 `compose.test.yaml` 叠加到在线项目。`scripts/local.py` 默认使用 `lab-gateway-test`，读取本地秘密并将数据库/Redis 指向测试端口，固定上游为本地 MOCK。测试和故障演练会核对项目发布端口与实际连接地址。不运行测试时可删除该项目的容器和卷；不要对在线项目执行同样操作。

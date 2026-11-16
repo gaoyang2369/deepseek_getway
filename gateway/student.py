@@ -7,12 +7,13 @@ from datetime import timedelta
 import anyio
 from argon2 import PasswordHasher
 from fastapi import APIRouter, Request, Response
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from .accounts import password_matches
+from .billing import period_bounds
 from .keys import issue
 from .models import (
-    BudgetPeriod,
+    Call,
     Membership,
     Operation,
     PersonalKey,
@@ -155,20 +156,24 @@ async def me(request: Request):
             )
         ).all()
         member_ids = [member.id for member, _ in memberships]
-        at = now()
-        periods = {
-            period.owner_id: period
-            for period in (
-                await db.scalars(
-                    select(BudgetPeriod).where(
-                        BudgetPeriod.owner_type == "membership",
-                        BudgetPeriod.owner_id.in_(member_ids),
-                        BudgetPeriod.starts_at <= at,
-                        BudgetPeriod.ends_at > at,
+        month_start, month_end = period_bounds(now(), "month")
+        # Show monthly settled usage regardless of daily/monthly admission limits.
+        # Attribute reconciliation to the original request month, as accounting does.
+        monthly_spent = dict(
+            (
+                await db.execute(
+                    select(Call.team_id, func.coalesce(func.sum(Call.cost), 0))
+                    .where(
+                        Call.student_id == student.id,
+                        Call.team_id.in_([team.id for _, team in memberships]),
+                        Call.status == "settled",
+                        Call.started_at >= month_start,
+                        Call.started_at < month_end,
                     )
+                    .group_by(Call.team_id)
                 )
             ).all()
-        }
+        )
         keys_by_member = defaultdict(list)
         for key in (
             await db.scalars(
@@ -180,10 +185,7 @@ async def me(request: Request):
             keys_by_member[key.membership_id].append(key)
         result["memberships"] = []
         for member, team in memberships:
-            period = periods.get(member.id)
             keys = keys_by_member[member.id]
-            limit = period.limit if period else member.budget
-            spent, reserved = (period.spent, period.reserved) if period else (0, 0)
             result["memberships"].append(
                 {
                     "id": member.id,
@@ -191,12 +193,8 @@ async def me(request: Request):
                     "active": member.active and team.active,
                     "models": sorted(set(member.models) & set(team.models)),
                     "max_output": team.max_output,
-                    "period": member.period,
                     "key_expires_at": member.key_expires_at,
-                    "limit": limit,
-                    "spent": spent,
-                    "reserved": reserved,
-                    "available": limit - spent - reserved,
+                    "spent": monthly_spent.get(team.id, 0),
                     "keys": [
                         {"id": k.id, "prefix": k.prefix, "active": k.active, "expires_at": k.expires_at}
                         for k in keys

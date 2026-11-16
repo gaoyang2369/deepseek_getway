@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Request
-from sqlalchemy import select
+from fastapi import APIRouter, Query, Request
+from sqlalchemy import func, select
 
 from ..keys import issue
 from ..models import (
@@ -52,26 +52,53 @@ async def issue_key(member_id: str, data: KeyIssue, request: Request):
 
 
 @router.get("/keys")
-async def keys(request: Request, include_deleted: bool = False):
+async def keys(
+    request: Request,
+    include_deleted: bool = False,
+    team_id: str | None = None,
+    paginated: bool = False,
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
     async with request.app.state.db() as db:
         query = (
-            select(PersonalKey)
-            .join(Membership)
-            .join(Student)
+            select(PersonalKey, Membership, Student)
+            .join(Membership, Membership.id == PersonalKey.membership_id)
+            .join(Student, Student.id == Membership.student_id)
             .join(Team, Team.id == Membership.team_id)
-            .order_by(PersonalKey.created_at.desc())
+            .order_by(PersonalKey.created_at.desc(), PersonalKey.id)
         )
         if not include_deleted:
             query = query.where(
                 Membership.deleted_at.is_(None), Student.deleted_at.is_(None), Team.deleted_at.is_(None)
             )
-        return [
+        if team_id:
+            query = query.where(Membership.team_id == team_id)
+        if paginated:
+            total = await db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+            query = query.offset(offset).limit(limit)
+        result = [
             {
-                k: getattr(row, k)
-                for k in ("id", "membership_id", "prefix", "models", "active", "expires_at", "created_at")
+                **{
+                    k: getattr(row, k)
+                    for k in ("id", "membership_id", "prefix", "models", "active", "expires_at", "created_at")
+                },
+                **(
+                    {
+                        "member": {
+                            "id": member.id,
+                            "name": student.name,
+                            "kind": student.kind,
+                            "models": member.models,
+                        }
+                    }
+                    if paginated
+                    else {}
+                ),
             }
-            for row in (await db.scalars(query)).all()
+            for row, member, student in (await db.execute(query)).all()
         ]
+        return {"rows": result, "total": total} if paginated else result
 
 
 @router.post("/keys/{key_id}/revoke")

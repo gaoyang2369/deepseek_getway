@@ -8,6 +8,7 @@ from ..models import (
     Event,
     Ledger,
     Membership,
+    Rejection,
     Team,
     now,
 )
@@ -154,8 +155,10 @@ async def clear_test_usage(team_id: str, data: TestUsageClear, request: Request)
             await db.execute(delete(Call).where(Call.team_id == team_id))
             removed_periods = await db.execute(delete(BudgetPeriod).where(BudgetPeriod.id.in_(periods)))
             await db.execute(delete(Event).where(Event.team_id == team_id))
+            rejections = await db.execute(delete(Rejection).where(Rejection.team_id == team_id))
             counts = {
                 "calls": len(calls),
+                "rejections": rejections.rowcount,
                 "budget_periods": removed_periods.rowcount,
                 "ledger_entries": ledgers.rowcount,
             }

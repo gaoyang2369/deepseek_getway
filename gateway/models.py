@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -165,6 +166,8 @@ class Call(Base):
     team_period_id: Mapped[str] = mapped_column(ForeignKey("budget_periods.id"))
     model: Mapped[str] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(24), default="reserved", index=True)
+    outcome: Mapped[str] = mapped_column(String(24), default="in_progress", server_default="in_progress")
+    outcome_reason: Mapped[str | None] = mapped_column(String(64))
     reason: Mapped[str | None] = mapped_column(String(64))
     reservation: Mapped[int] = mapped_column(BigInteger)
     cost: Mapped[int | None] = mapped_column(BigInteger)
@@ -214,6 +217,21 @@ class Audit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class Rejection(Base):
+    __tablename__ = "rejections"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    student_id: Mapped[str | None] = mapped_column(ForeignKey("students.id"))
+    membership_id: Mapped[str | None] = mapped_column(ForeignKey("memberships.id"))
+    team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), index=True)
+    key_id: Mapped[str | None] = mapped_column(ForeignKey("personal_keys.id"))
+    model: Mapped[str | None] = mapped_column(String(128))
+    reason: Mapped[str] = mapped_column(String(64))
+    http_status: Mapped[int] = mapped_column(Integer)
+    limit_scope: Mapped[str | None] = mapped_column(String(24))
+    ip: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
 class Event(Base):
     __tablename__ = "events"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -224,6 +242,13 @@ class Event(Base):
     detail: Mapped[dict] = mapped_column(JSONB, default=dict)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now, server_default=func.now()
+    )
+    occurrences: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_by: Mapped[str | None] = mapped_column(String(100))
+    resolution: Mapped[str | None] = mapped_column(String(500))
 
 
 class AdminSession(Base):

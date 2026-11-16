@@ -368,45 +368,65 @@
       if (selectedTab === "harness")
         content.append(
           paragraph(
-            "在已安装的 DeepSeek Harness 中新增“自定义模型 API”，将实验室网关作为独立提供商。",
+            "在已打开的 DeepSeek Harness 中按下面四步接入。完成后即可使用，无需执行终端命令或手动编辑配置文件。",
           ),
           list(
             [
               "打开 设置 → 模型 → 添加模型提供商 → 自定义模型 API。",
-              "Provider ID 填 lab-gateway，显示名称可填“实验室网关”；按下表填写地址、协议与个人 Key。",
-              "点“获取可用模型”，选择本组模型并保存；也可手动添加模型 ID。",
-              "基础对话保存后即可使用。需要配置思考、重试和工具回放时，再将下方可选配置合并到当前 profile 的 cordis.patch.yml，保留其他提供商。",
-              "在启动 Harness 的同一终端设置 LAB_LLM_API_KEY（下方有命令）；若改用设置页保存 Key，请保留设置页生成的 apiKeyEnv 凭据引用。",
-              "新建会话，在模型选择器选择 lab-gateway / " +
-                modelId +
-                "，先发一条短消息，再测试项目文件或终端工具。",
+              "按下表填写网关地址，协议选择 OpenAI Chat Completions，API Key 填本组个人 Key。",
+              "点击“获取可用模型”，选择本组模型并保存。",
+              "在会话中选择 lab-gateway / " + modelId + "，发送一条消息验证。",
             ],
             true,
           ),
           mapping([
-            ["API 协议", "OpenAI Chat Completions / openai-completions"],
+            ["Provider ID / 显示名称", "lab-gateway / 实验室网关"],
+            ["API 协议", "OpenAI Chat Completions"],
             ["Base URL", profile.base_url],
-            ["API Key", "本组个人 Key，不是 DeepSeek 官网 Key"],
+            ["API Key", "本组个人 Key，不是登录密码或 DeepSeek 官网 Key"],
             ["模型 ID", modelId],
-            ["输入类型", "仅 text"],
-            [
-              "建议单次输出",
-              String(Math.min(group.max_output, 4096)) + " Token",
-            ],
           ]),
-          ...environment(sample),
-          paragraph(
-            "常规 dsh web 的配置路径：$DSH_HOME/profiles/web/cordis.patch.yml。自定义 profile 请改成实际名称；从该终端启动 dsh web 才能读取刚设置的环境变量。",
-            "section-note",
-          ),
-          code("Harness 网关配置 · 合并片段", sample.harness, "guide-harness"),
-          paragraph(
-            "网关已兼容默认的 store: false、developer 指令及较大的客户端输出额度；仍按项目组输出上限执行。下方兼容配置可减少参数转换，thinkingFormat: deepseek 用于显式控制思考。支持 none / low / high / max，minimal / medium / xhigh 按官方规则映射。",
-            "section-note",
-          ),
-          paragraph(
-            "本地文件、终端与函数工具可走此协议。DeepSeek 官方额外的搜索、上传、图片和 Responses API 未经此网关开放，请勿按官网默认能力启用。",
-            "key-warning",
+          details(
+            "高级配置（可选，界面接入无需操作）",
+            paragraph(
+              "只有需要手动配置、环境变量凭据或调整高级参数时才使用以下内容。界面已保存 Key 的同学无需再设置环境变量，也不要用示例中的 apiKeyEnv 覆盖界面保存的凭据引用。",
+            ),
+            mapping([
+              ["输入类型", "仅 text"],
+              [
+                "建议单次输出",
+                String(Math.min(group.max_output, 4096)) + " Token",
+              ],
+            ]),
+            paragraph(
+              "如选择使用环境变量提供 Key，在启动 Harness 的同一终端设置。下方示例使用页面上方所选的终端环境。",
+            ),
+            code(
+              "环境变量 · " +
+                (selectedShell === "bash" ? "Bash" : "PowerShell"),
+              sample[selectedShell],
+              "guide-environment",
+            ),
+            paragraph(
+              "dsh web 用于启动 Harness Web 界面，不是填写网关配置后的额外接入步骤。使用环境变量凭据时，从设置变量的终端启动才能读取它们。常规配置路径为 $DSH_HOME/profiles/web/cordis.patch.yml；自定义 profile 请使用实际名称。",
+              "section-note",
+            ),
+            paragraph(
+              "需要手动调整时，将下方片段合并到当前 profile 的配置中，保留其他提供商及已有字段。",
+            ),
+            code(
+              "Harness 网关配置 · 合并片段",
+              sample.harness,
+              "guide-harness",
+            ),
+            paragraph(
+              "网关已兼容默认的 store: false、developer 指令及较大的客户端输出额度，仍按项目组输出上限执行；无需为了基础接入添加这些兼容项。thinkingFormat: deepseek 用于显式控制思考。支持 none / low / high / max，minimal / medium / xhigh 按网关兼容规则映射。",
+              "section-note",
+            ),
+            paragraph(
+              "本地文件、终端与函数工具可走此协议。此网关未开放 DeepSeek 官网额外的搜索、上传、图片和 Responses API。",
+              "section-note",
+            ),
           ),
         );
       if (selectedTab === "http")

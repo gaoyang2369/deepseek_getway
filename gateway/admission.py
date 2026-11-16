@@ -209,7 +209,7 @@ return {a, b}
 """
 
 
-async def admit(app, authorization, body, request_id, ip, started):
+async def admit(app, authorization, body, request_id, ip, started, request_state=None):
     factory, settings = app.state.db, app.state.settings
     if not authorization or not authorization.startswith("Bearer ") or len(authorization) > 256:
         fail(401, "invalid_api_key")
@@ -244,11 +244,15 @@ async def admit(app, authorization, body, request_id, ip, started):
         },
     )
     if "error" in result:
+        if request_state is not None:
+            request_state.limit_scope = result.get("limit_scope")
         if result["status"] in (401, 403):
             app.state.admission.routes.pop(key_digest, None)
         fail(result["status"], result["error"])
     # The transaction has committed before this timer or any upstream dispatch.
     values = result["call"]
+    if request_state is not None:
+        request_state.admitted = True
     for name in ("started_at", "ended_at"):
         if values.get(name):
             values[name] = datetime.fromisoformat(values[name])

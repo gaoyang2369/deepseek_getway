@@ -21,6 +21,8 @@ export const operationId = () =>
     v.toString(16).padStart(2, "0"),
   ).join("");
 const errorMessages = {
+  event_requires_reconciliation:
+    "费用尚未核对，请先点击“查看请求 / 核对”完成结算；标记处理不会释放预算。",
   official_pricing_unavailable:
     "暂时无法获取 DeepSeek 官网价格，原配置保持不变，请稍后重试。",
   official_pricing_format_changed:
@@ -116,8 +118,13 @@ export async function api(path, method = "GET", body) {
       $("#console").hidden = true;
       $("#login-screen").hidden = false;
     }
+    const message =
+      errorMessages[data.error?.message] || "请求未能完成，请稍后重试。";
+    const detail = data.error?.details;
     throw new Error(
-      errorMessages[data.error?.message] || "请求未能完成，请稍后重试。",
+      data.error?.message === "student_identity_conflict" && detail?.line
+        ? `名单第 ${detail.line} 人（学号 ${detail.student_number}）：${message} 本批未添加任何成员，请修改后重试。`
+        : message,
     );
   }
   return data;
@@ -153,7 +160,12 @@ export function table(headers, rows) {
     t = node("table"),
     head = node("thead"),
     tr = node("tr");
-  headers.forEach((h) => tr.append(node("th", h)));
+  headers.forEach((h) => {
+    const cell = node("th");
+    if (h instanceof Node) cell.append(h);
+    else cell.textContent = h;
+    tr.append(cell);
+  });
   head.append(tr);
   t.append(head);
   const body = node("tbody");
@@ -234,4 +246,79 @@ export function studentName(cache, id) {
   return (
     cache.memberHistory.find((m) => m.student_id === id)?.name || short(id)
   );
+}
+
+// Roster pages keep separate cursors, while sharing the same pagination controls.
+export async function listPage(path, filters, state) {
+  const size = state.size,
+    offset = state.offset;
+  const params = new URLSearchParams({
+    ...filters,
+    paginated: "true",
+    limit: size,
+    offset,
+  });
+  let result = await api(path + "?" + params);
+  const last = Math.max(0, (Math.ceil(result.total / size) - 1) * size);
+  if (offset > last) {
+    if (state.offset === offset && state.size === size) state.offset = last;
+    params.set("offset", last);
+    result = await api(path + "?" + params);
+  }
+  return result;
+}
+
+export function listPagination(state, total, label, load) {
+  const { size, offset } = state;
+  const pages = Math.max(1, Math.ceil(total / size));
+  const current = Math.floor(offset / size) + 1;
+  const bar = node("div", undefined, "record-pagination");
+  bar.setAttribute("role", "group");
+  bar.setAttribute("aria-label", label + "分页");
+  async function change(next) {
+    state.offset = next;
+    await load();
+  }
+  const select = field("每页条数", "page_size", "text", String(size), [
+    ["10", "10 条"],
+    ["20", "20 条"],
+    ["50", "50 条"],
+  ]);
+  select.querySelector("select").addEventListener("change", (e) => {
+    state.size = Number(e.target.value);
+    change(0).catch(showError);
+  });
+  const buttons = node("div", undefined, "pagination-buttons");
+  const previous = button("上一页", () => change(Math.max(0, offset - size)));
+  previous.disabled = offset === 0;
+  buttons.append(previous);
+  const visible = new Set([1, pages]);
+  for (let n = Math.max(1, current - 2); n <= Math.min(pages, current + 2); n++)
+    visible.add(n);
+  let last = 0;
+  for (const n of [...visible].sort((a, b) => a - b)) {
+    if (last && n > last + 1)
+      buttons.append(node("span", "…", "pagination-gap"));
+    const page = button(String(n), () => change((n - 1) * size));
+    page.setAttribute("aria-label", `第 ${n} 页`);
+    if (n === current) {
+      page.setAttribute("aria-current", "page");
+      page.disabled = true;
+    }
+    buttons.append(page);
+    last = n;
+  }
+  const next = button("下一页", () => change(offset + size));
+  next.disabled = offset + size >= total;
+  buttons.append(next);
+  bar.append(
+    node(
+      "span",
+      `共 ${total} 条 · 第 ${current} / ${pages} 页`,
+      "pagination-summary",
+    ),
+    select,
+    buttons,
+  );
+  return bar;
 }

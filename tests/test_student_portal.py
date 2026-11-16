@@ -149,7 +149,11 @@ async def test_student_first_login_key_rotation_and_shared_budget(admin, app, po
         "/admin/api/students/import", json={**body, "operation_id": str(uuid.uuid4()), "budget": 999}
     )
     assert (await portal.get("/student/api/me")).json()["memberships"][0]["spent"] == 376
-    assert (await portal.get("/student/api/me")).json()["memberships"][0]["limit"] == 10000000
+    assert not {"limit", "reserved", "available", "budget", "period"} & set(
+        (await portal.get("/student/api/me")).json()["memberships"][0]
+    )
+    async with app.state.db() as db:
+        assert (await db.get(Membership, member)).budget == 10000000
 
 
 async def test_student_permissions_csrf_and_ownership(admin, app, portal):
@@ -307,3 +311,64 @@ async def test_concurrent_student_issue_and_expiry_cap(admin, app, portal):
             json={"operation_id": str(uuid.uuid4()), "membership_id": first["membership_id"], "rotate": True},
         )
     ).status_code == 400
+
+
+async def test_student_monthly_usage_hides_limits_and_excludes_other_months(admin, app, portal):
+    from gateway.billing import period_bounds
+    from gateway.models import Call
+
+    await price(admin)
+    group = await team(admin)
+    imported, _ = await roster(admin, group, numbers=("monthly-001",))
+    member_id = imported["students"][0]["membership_id"]
+    async with app.state.db() as db, db.begin():
+        (await db.get(Membership, member_id)).period = "day"
+    await login(portal, "monthly-001")
+    await change(portal, "monthly-001")
+    issued = await portal.post(
+        "/student/api/keys", json={"operation_id": str(uuid.uuid4()), "membership_id": member_id}
+    )
+    key = issued.json()["key"]
+    for _ in range(4):
+        assert (await completion(portal, key)).status_code == 200
+    assert (await completion(portal, key, "no-usage")).status_code == 200
+    start, end = period_bounds(now(), "month")
+    async with app.state.db() as db, db.begin():
+        calls = (
+            await db.scalars(
+                select(Call)
+                .where(Call.membership_id == member_id, Call.status == "settled")
+                .order_by(Call.started_at)
+            )
+        ).all()
+        for call, at in zip(
+            calls, (start, start + timedelta(days=1), start - timedelta(microseconds=1), end), strict=True
+        ):
+            call.started_at = at
+        assert len(calls) == 4
+    member = (await portal.get("/student/api/me")).json()["memberships"][0]
+    assert member["spent"] == 376  # Two settled calls within the Beijing calendar month.
+    assert not {"limit", "reserved", "available", "budget", "period"} & set(member)
+    budgets = (await admin.get("/admin/api/budgets")).json()
+    personal = next(p for p in budgets if p["owner_id"] == member_id)
+    assert personal["limit"] == 10000000 and personal["reserved"] > 0
+    assert personal["spent"] == 752  # Student display changes no ledger entries.
+    assert (
+        await admin.post(
+            f"/admin/api/budgets/membership/{member_id}", json={"amount": 0, "reason": "验证限额继续执行"}
+        )
+    ).status_code == 200
+    assert (await completion(portal, key)).status_code == 402
+
+
+async def test_student_password_minimum_eight_characters(admin, portal):
+    imported, _ = await roster(admin, await team(admin), numbers=("eight-char",))
+    await login(portal, "eight-char")
+    short = await portal.post(
+        "/student/api/password", json={"current_password": "eight-char", "new_password": "Abcd123"}
+    )
+    assert short.status_code == 422
+    await change(portal, "eight-char", "Abcd1234")
+    assert not (await portal.get("/student/api/me")).json()["must_change_password"]
+    await portal.post("/student/api/logout", json={})
+    await login(portal, "eight-char", "Abcd1234")

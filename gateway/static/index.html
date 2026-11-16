@@ -39,10 +39,8 @@
           ><button data-view="members">人员与密钥</button
           ><button data-view="students">学生账号</button
           ><button data-view="budgets">预算账本</button
-          ><button data-view="requests">请求记录</button
-          ><button data-view="prices">模型与计价</button
-          ><button data-view="events">异常事件</button
-          ><button data-view="audit">管理审计</button>
+          ><button data-view="records">记录与追溯</button
+          ><button data-view="prices">模型与计价</button>
         </nav>
         <div class="aside-foot">
           单机网关 · CNY<br />统计时区 Asia/Shanghai<button id="logout">
@@ -59,10 +57,18 @@
           <button id="refresh" class="secondary">刷新数据 ↻</button>
         </header>
         <div id="notice" role="status"></div>
+        <nav
+          id="record-tabs"
+          class="record-tabs"
+          aria-label="记录与追溯"
+          hidden
+        >
+          <button data-view="requests">请求记录</button>
+          <button data-view="rejections">拒绝记录</button>
+          <button data-view="events">告警与待办</button>
+          <button data-view="audit">管理审计</button>
+        </nav>
         <section id="content"></section>
-        <footer>
-          费用单位为人民币；估算费用需与官方账单核对。吊销仅阻止新请求，已发送请求可能继续执行。
-        </footer>
       </main>
     </div>
     <dialog id="modal">

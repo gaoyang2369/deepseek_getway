@@ -3,7 +3,6 @@ import {
   node,
   money,
   date,
-  short,
   confirmAction,
   api,
   button,
@@ -14,6 +13,9 @@ import {
   field,
   yuan,
   models,
+  listPage,
+  listPagination,
+  showError,
 } from "./common.js";
 import {
   initialPasswordField,
@@ -24,6 +26,7 @@ import {
   showStudentEnrollment,
   budgetForm,
   keyForm,
+  batchEnrollmentForm,
 } from "./forms.js";
 export async function teamsView(cache, load) {
   return [
@@ -69,6 +72,13 @@ export async function teamsView(cache, load) {
         money(t.budget) + " / " + t.period,
         t.rpm + " / " + t.concurrency,
         actions(
+          ...(t.active
+            ? [
+                button("批量添加成员", () =>
+                  batchEnrollmentForm(cache, load, t.id),
+                ),
+              ]
+            : []),
           button(t.active ? "停用" : "启用", async () => {
             await api("/teams/" + t.id, "PATCH", { active: !t.active });
             await load();
@@ -101,11 +111,39 @@ export async function teamsView(cache, load) {
     ),
   ];
 }
+const memberPage = { offset: 0, size: 10 };
+const keyPage = { offset: 0, size: 10 };
+let memberTeam = "";
 export async function membersView(cache, load) {
-  const keys = await api("/keys");
+  if (memberTeam && !cache.teams.some((t) => t.id === memberTeam)) {
+    memberTeam = "";
+    memberPage.offset = keyPage.offset = 0;
+  }
+  const filters = memberTeam ? { team_id: memberTeam } : {};
+  const [members, keys] = await Promise.all([
+    listPage("/memberships", filters, memberPage),
+    listPage("/keys", filters, keyPage),
+  ]);
+  const teamFilter = field("项目组", "member_team", "text", memberTeam, [
+    ["", "全部"],
+    ...cache.teams.map((t) => [t.id, t.name + (t.active ? "" : "（已停用）")]),
+  ]);
+  teamFilter.className = "table-header-filter";
+  teamFilter.querySelector("select").setAttribute("aria-label", "按项目组查看");
+  teamFilter.querySelector("select").addEventListener("change", (e) => {
+    memberTeam = e.target.value;
+    memberPage.offset = keyPage.offset = 0;
+    load().catch(showError);
+  });
+  const memberPager = () =>
+    listPagination(memberPage, members.total, "成员", load);
+  const keyPager = () => listPagination(keyPage, keys.total, "密钥", load);
   return [
     toolbar(
       "成员关系",
+      button("＋ 批量添加成员", () =>
+        batchEnrollmentForm(cache, load, memberTeam),
+      ),
       button("＋ 添加人员", () => {
         if (!cache.teams.length) throw new Error("请先创建项目组");
         openForm(
@@ -123,7 +161,7 @@ export async function membersView(cache, load) {
               "项目组",
               "team_id",
               "text",
-              cache.teams[0].id,
+              memberTeam || cache.teams[0].id,
               cache.teams.map((t) => [t.id, t.name]),
             ),
             field("个人预算 / 元", "budget", "number", "0"),
@@ -135,7 +173,9 @@ export async function membersView(cache, load) {
               "允许模型（英文逗号分隔）",
               "models",
               "text",
-              cache.teams[0].models.join(","),
+              (
+                cache.teams.find((t) => t.id === memberTeam) || cache.teams[0]
+              ).models.join(","),
             ),
             field("到期时间（可留空）", "expires_at", "datetime-local"),
           ],
@@ -161,8 +201,8 @@ export async function membersView(cache, load) {
       }),
     ),
     table(
-      ["姓名", "学号 / 编号", "项目组", "状态", "预算", "操作"],
-      cache.members.map((m) => [
+      ["姓名", "学号 / 编号", teamFilter, "状态", "预算", "操作"],
+      members.rows.map((m) => [
         m.name,
         m.student_number,
         m.team,
@@ -205,17 +245,17 @@ export async function membersView(cache, load) {
         ),
       ]),
     ),
+    memberPager(),
     toolbar("个人密钥（仅显示前缀）"),
     table(
       ["前缀", "成员", "模型", "状态", "到期", "操作"],
-      keys.map((k) => [
+      keys.rows.map((k) => [
         k.prefix + "…",
-        cache.members.find((m) => m.id === k.membership_id)?.name ||
-          short(k.membership_id),
+        k.member.name,
         k.models.join(","),
         badge(k.active),
         date(k.expires_at),
-        cache.members.find((m) => m.id === k.membership_id)?.kind === "service"
+        k.member.kind === "service"
           ? actions(
               button(
                 "吊销",
@@ -225,16 +265,11 @@ export async function membersView(cache, load) {
                 },
                 "danger",
               ),
-              button("轮换服务 Key", () =>
-                keyForm(
-                  cache.members.find((m) => m.id === k.membership_id),
-                  load,
-                  k.id,
-                ),
-              ),
+              button("轮换服务 Key", () => keyForm(k.member, load, k.id)),
             )
           : node("span", "学生自助管理", "muted"),
       ]),
     ),
+    keyPager(),
   ];
 }

@@ -53,7 +53,7 @@ class StudentImport(Strict):
 
 class PasswordChange(Strict):
     current_password: str = Field(min_length=1, max_length=1024)
-    new_password: str = Field(min_length=16, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class StudentKeyIssue(Strict):
@@ -139,6 +139,10 @@ class BudgetUpdate(Strict):
 class Reconcile(Strict):
     cost: Amount
     reason: Reason
+
+
+class EventResolve(Strict):
+    reason: Reason = "已检查"
 
 
 class Message(Strict):

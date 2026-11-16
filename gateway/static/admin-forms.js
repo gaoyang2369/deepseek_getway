@@ -9,6 +9,8 @@ import {
   field,
   yuan,
   models,
+  button,
+  table,
 } from "./common.js";
 let submitAction = null,
   modalComposing = false;
@@ -103,7 +105,7 @@ export function clearTestUsageForm(teams, load, selected) {
     [
       node(
         "p",
-        "将删除所选项目组全部模拟调用、费用记录、周期账本与相关异常事件。项目组、成员、学生、Key 和预算配置保留。此操作不能在页面撤回。",
+        "将删除所选项目组全部模拟调用、拒绝记录、费用记录、周期账本与相关告警。项目组、成员、学生、Key 和预算配置保留。此操作不能在页面撤回。",
         "key-warning",
       ),
       field(
@@ -239,4 +241,175 @@ export function initialPasswordField(config, label = "初始密码方式") {
         ]
       : [["random", "随机临时密码"]],
   );
+}
+
+export function batchEnrollmentForm(
+  cache,
+  load,
+  selected,
+  allowNumberOnly = false,
+) {
+  const teams = cache.teams.filter((t) => t.active);
+  if (!teams.length) throw new Error("请先创建或启用项目组");
+  const team = teams.find((t) => t.id === selected) || teams[0];
+  const rosterField = field("成员名单（学号、姓名）", "roster", "textarea");
+  const rosterInput = rosterField.querySelector("textarea");
+  rosterInput.rows = 6;
+  rosterInput.placeholder = "0012026001,张三\n0012026002,李四";
+  const preview = node("div");
+  preview.id = "roster-preview";
+  preview.setAttribute("aria-live", "polite");
+  function parseRoster() {
+    const students = [],
+      seen = new Map();
+    for (const [index, raw] of rosterInput.value.split(/\r?\n/).entries()) {
+      const line = raw.trim();
+      if (!line) continue;
+      const parts = line.split(/[,，\t]/).map((part) => part.trim());
+      const [student_number, name] = parts;
+      const prefix = `第 ${index + 1} 行：`;
+      if (parts.length > 2 || !student_number || (!allowNumberOnly && !name))
+        throw new Error(
+          prefix + "请填写“学号,姓名”，也可从 Excel 粘贴这两列。",
+        );
+      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(student_number))
+        throw new Error(
+          prefix + "学号仅支持字母、数字、下划线和短横线，最多 64 个字符。",
+        );
+      if (name && name.length > 100)
+        throw new Error(prefix + "姓名不能超过 100 个字符。");
+      if (seen.has(student_number))
+        throw new Error(
+          prefix +
+            `学号 ${student_number} 与第 ${seen.get(student_number)} 行重复，请删除重复行。`,
+        );
+      seen.set(student_number, index + 1);
+      students.push({ student_number, ...(name ? { name } : {}) });
+    }
+    if (!students.length) throw new Error("请至少填写一位成员。");
+    if (students.length > 100)
+      throw new Error("每批最多添加 100 人，请分批提交。");
+    return students;
+  }
+  const previewButton = button("预览名单", () => {
+    preview.replaceChildren();
+    const students = parseRoster();
+    preview.append(
+      node("p", `共 ${students.length} 人，请核对学号和姓名。`),
+      table(
+        ["序号", "学号", "姓名"],
+        students.map((s, i) => [
+          i + 1,
+          s.student_number,
+          s.name || "以学号作为姓名",
+        ]),
+      ),
+    );
+  });
+  rosterInput.addEventListener("input", () => preview.replaceChildren());
+  openForm(
+    "批量添加成员",
+    [
+      node(
+        "p",
+        "每行填写“学号,姓名”，支持中文逗号或从 Excel 粘贴两列，学号保留前导零。每批最多 100 人。" +
+          (allowNumberOnly ? "也可每行只填学号。" : ""),
+        "section-note",
+      ),
+      field(
+        "项目组",
+        "team_id",
+        "text",
+        team.id,
+        teams.map((t) => [t.id, t.name]),
+      ),
+      rosterField,
+      previewButton,
+      preview,
+      node(
+        "p",
+        "以下设置用于本批新增成员。已在组内的成员会跳过，保留原密码、预算、权限与状态；姓名冲突时整批不添加。",
+        "section-note",
+      ),
+      initialPasswordField(cache.config),
+      field("每人预算 / 元", "budget", "number", "0"),
+      field("周期", "period", "text", "month", [
+        ["month", "自然月"],
+        ["day", "自然日"],
+      ]),
+      field(
+        "允许模型（英文逗号分隔）",
+        "models",
+        "text",
+        team.models.join(","),
+      ),
+      field("接入到期时间（可留空）", "expires_at", "datetime-local"),
+    ],
+    async (d) => {
+      const students = parseRoster();
+      const result = await api("/students/import", "POST", {
+        operation_id: $("#modal-form").dataset.operation,
+        team_id: d.team_id,
+        students,
+        initial_password_mode: d.initial_password_mode,
+        budget: yuan(d.budget),
+        period: d.period,
+        models: models(d.models),
+        expires_at: d.expires_at ? new Date(d.expires_at).toISOString() : null,
+      });
+      const added = result.students.filter((s) => s.membership_created).length;
+      const passwords = new Map(
+        result.initial_passwords.map((s) => [s.student_number, s.password]),
+      );
+      const summary = result.replayed
+        ? "此批次已处理，无需重复添加。"
+        : `新增 ${added} 位成员，已有 ${result.students.length - added} 位成员。`;
+      openForm(
+        "批量添加结果",
+        [
+          node("p", summary, "section-note"),
+          node("p", "学生入口：" + result.student_url),
+          node(
+            "p",
+            result.replayed
+              ? "随机初始密码无法再次显示；若未保存，请在“学生账号”中为对应学生重置密码。"
+              : "新账号首次登录须修改密码，再自行领取 Key。随机临时密码仅显示一次，请单独交给对应学生。",
+            "key-warning",
+          ),
+          table(
+            ["学号", "姓名", "成员状态", "登录密码"],
+            result.students.map((s) => [
+              s.student_number,
+              s.name ||
+                students.find(
+                  (item) => item.student_number === s.student_number,
+                )?.name ||
+                s.student_number,
+              result.replayed
+                ? "已处理"
+                : s.membership_created
+                  ? "已添加"
+                  : "已存在，保留原设置",
+              passwords.get(s.student_number) ||
+                (!s.account_created
+                  ? "使用原密码"
+                  : result.initial_password_mode === "student_number"
+                    ? "初始密码与学号相同"
+                    : "仅首次响应显示，遗失请重置"),
+            ]),
+          ),
+        ],
+        null,
+      );
+      await load();
+      notice(summary, "success");
+    },
+  );
+  $("#modal-submit").textContent = "批量添加";
+  $("#modal-fields [name=expires_at]").required = false;
+  $("#modal-fields [name=team_id]").addEventListener("change", (e) => {
+    $("#modal-fields [name=models]").value = teams
+      .find((t) => t.id === e.target.value)
+      .models.join(",");
+  });
 }

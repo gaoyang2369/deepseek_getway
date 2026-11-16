@@ -1,26 +1,58 @@
 import {
-  $,
   node,
-  notice,
   api,
   button,
   table,
   actions,
   toolbar,
   field,
-  yuan,
-  models,
+  listPage,
+  listPagination,
+  showError,
 } from "./common.js";
-import {
-  initialPasswordField,
-  openForm,
-  closeModal,
-  deleteEntry,
-} from "./forms.js";
+import { openForm, deleteEntry, batchEnrollmentForm } from "./forms.js";
+const studentPage = { offset: 0, size: 10 };
+let studentSearch = "";
 export async function studentAdminView(cache, load) {
-  const accounts = await api("/students/accounts");
-  const people = await api("/students");
-  const accountFor = (id) => accounts.find((a) => a.student_id === id);
+  const people = await listPage("/students", { q: studentSearch }, studentPage);
+  const search = node("form", undefined, "toolbar");
+  search.setAttribute("role", "search");
+  const searchField = field(
+    "学号 / 姓名",
+    "student_search",
+    "search",
+    studentSearch,
+  );
+  const input = searchField.querySelector("input");
+  input.required = false;
+  input.maxLength = 100;
+  input.placeholder = "输入完整或部分学号、姓名";
+  const submit = node("button", "查询", "secondary");
+  submit.type = "submit";
+  search.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (e.isComposing) return;
+    studentSearch = input.value.trim();
+    studentPage.offset = 0;
+    load().catch(showError);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.isComposing || e.keyCode === 229))
+      e.preventDefault();
+  });
+  search.append(
+    searchField,
+    actions(
+      submit,
+      button("清空搜索", () => {
+        studentSearch = "";
+        studentPage.offset = 0;
+        return load();
+      }),
+    ),
+  );
+  const pager = () =>
+    listPagination(studentPage, people.total, "学生账号", load);
   function showTemporary(title, result) {
     openForm(
       title,
@@ -36,83 +68,9 @@ export async function studentAdminView(cache, load) {
       null,
     );
   }
-  const importButton = button("＋ 批量导入学号", () => {
-    if (!cache.teams.length) throw new Error("请先创建项目组");
-    openForm(
-      "导入学生账号",
-      [
-        node(
-          "p",
-          "每行填写“学号”或“学号,姓名”，保留前导零，每批最多 100 人。重复导入只补齐账户和成员关系，不重置现有密码、预算或 Key。",
-          "section-note",
-        ),
-        field(
-          "项目组",
-          "team_id",
-          "text",
-          cache.teams[0].id,
-          cache.teams.map((t) => [t.id, t.name]),
-        ),
-        field("学号名单", "roster", "textarea"),
-        initialPasswordField(cache.config),
-        field("个人预算 / 元", "budget", "number", "10"),
-        field("周期", "period", "text", "month", [
-          ["month", "自然月"],
-          ["day", "自然日"],
-        ]),
-        field(
-          "允许模型（英文逗号分隔）",
-          "models",
-          "text",
-          cache.teams[0].models.join(","),
-        ),
-        field("接入到期时间（可留空）", "expires_at", "datetime-local"),
-      ],
-      async (d) => {
-        const students = d.roster
-          .split(/\r?\n/)
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .map((line) => {
-            const parts = line.split(/[,，\t]/).map((s) => s.trim());
-            if (parts.length > 2 || !parts[0])
-              throw new Error("名单每行只接受学号，或学号和姓名两列");
-            return {
-              student_number: parts[0],
-              ...(parts[1] ? { name: parts[1] } : {}),
-            };
-          });
-        const result = await api("/students/import", "POST", {
-          operation_id: $("#modal-form").dataset.operation,
-          team_id: d.team_id,
-          students,
-          initial_password_mode: d.initial_password_mode,
-          budget: yuan(d.budget),
-          period: d.period,
-          models: models(d.models),
-          expires_at: d.expires_at
-            ? new Date(d.expires_at).toISOString()
-            : null,
-        });
-        if (result.initial_passwords.length)
-          showTemporary(
-            "初始密码（仅显示一次）",
-            result.initial_passwords
-              .map((s) => s.student_number + "\t" + s.password)
-              .join("\n"),
-          );
-        else closeModal();
-        await load();
-        notice(
-          result.replayed
-            ? "此次导入已处理，原密码和预算保留。"
-            : `已导入 ${result.students.length} 人，网页登录已自动开通，由学生自行登录领取 Key。`,
-          "success",
-        );
-      },
-    );
-    $("#modal-fields [name=expires_at]").required = false;
-  });
+  const importButton = button("＋ 批量导入学号", () =>
+    batchEnrollmentForm(cache, load, undefined, true),
+  );
   return [
     toolbar("学生自助入口", importButton),
     node(
@@ -122,15 +80,15 @@ export async function studentAdminView(cache, load) {
         "/student。首次登录必须改密，之后自行领取个人 Key。忘记密码时，通过邮箱联系管理员，管理员核实身份后重置。重置会撤销该学生的全部旧会话与 API Key，保留已用预算。",
       "section-note",
     ),
+    search,
     table(
       ["姓名", "学号", "账号状态", "操作"],
-      people.map((p) => {
-        const a = accountFor(p.student_id);
+      people.rows.map((p) => {
         return [
           p.name,
           p.student_number,
-          a
-            ? a.must_change_password
+          p.must_change_password !== null
+            ? p.must_change_password
               ? "待首次改密"
               : "已设置密码"
             : "待设置初始密码",
@@ -175,5 +133,6 @@ export async function studentAdminView(cache, load) {
         ];
       }),
     ),
+    pager(),
   ];
 }

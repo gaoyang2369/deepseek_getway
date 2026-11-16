@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Request
-from sqlalchemy import delete, select, text, update
+from fastapi import APIRouter, HTTPException, Query, Request
+from sqlalchemy import delete, func, or_, select, text, update
 
 from ..accounts import create_membership, prepare_password, remove_memberships
 from ..keys import issue
@@ -118,20 +118,32 @@ async def enroll(data: Enroll, request: Request):
 
 
 @router.get("/memberships")
-async def memberships(request: Request, include_deleted: bool = False):
+async def memberships(
+    request: Request,
+    include_deleted: bool = False,
+    team_id: str | None = None,
+    paginated: bool = False,
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
     async with request.app.state.db() as db:
         query = (
             select(Membership, Student, Team)
             .join(Student, Student.id == Membership.student_id)
             .join(Team, Team.id == Membership.team_id)
-            .order_by(Student.student_number)
+            .order_by(Student.student_number, Membership.id)
         )
         if not include_deleted:
             query = query.where(
                 Membership.deleted_at.is_(None), Student.deleted_at.is_(None), Team.deleted_at.is_(None)
             )
+        if team_id:
+            query = query.where(Membership.team_id == team_id)
+        if paginated:
+            total = await db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+            query = query.offset(offset).limit(limit)
         rows = (await db.execute(query)).all()
-        return [
+        result = [
             {
                 "id": m.id,
                 "student_id": s.id,
@@ -150,21 +162,45 @@ async def memberships(request: Request, include_deleted: bool = False):
             }
             for m, s, t in rows
         ]
+        return {"rows": result, "total": total} if paginated else result
 
 
 @router.get("/students")
-async def students(request: Request):
+async def students(
+    request: Request,
+    q: str = Query("", max_length=100),
+    paginated: bool = False,
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
     async with request.app.state.db() as db:
-        return [
-            {"student_id": s.id, "student_number": s.student_number, "name": s.name, "active": s.active}
-            for s in (
-                await db.scalars(
-                    select(Student)
-                    .where(Student.kind == "student", Student.deleted_at.is_(None))
-                    .order_by(Student.student_number)
+        query = (
+            select(Student, StudentAccount.must_change_password)
+            .outerjoin(StudentAccount, StudentAccount.student_id == Student.id)
+            .where(Student.kind == "student", Student.deleted_at.is_(None))
+            .order_by(Student.student_number, Student.id)
+        )
+        if term := q.strip():
+            query = query.where(
+                or_(
+                    Student.student_number.icontains(term, autoescape=True),
+                    Student.name.icontains(term, autoescape=True),
                 )
-            ).all()
+            )
+        if paginated:
+            total = await db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+            query = query.offset(offset).limit(limit)
+        result = [
+            {
+                "student_id": s.id,
+                "student_number": s.student_number,
+                "name": s.name,
+                "active": s.active,
+                **({"must_change_password": must_change} if paginated else {}),
+            }
+            for s, must_change in (await db.execute(query)).all()
         ]
+        return {"rows": result, "total": total} if paginated else result
 
 
 @router.delete("/students/{student_id}")
@@ -278,7 +314,7 @@ async def import_students(data: StudentImport, request: Request):
         }
         passwords = []
         # Same order as other identity operations; batch re-import never resets a password or budget.
-        for item in sorted(data.students, key=lambda s: s.student_number):
+        for line, item in sorted(enumerate(data.students, 1), key=lambda row: row[1].student_number):
             await db.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:id, 1))"), {"id": item.student_number}
             )
@@ -292,7 +328,13 @@ async def import_students(data: StudentImport, request: Request):
                 or not student.active
                 or (item.name is not None and student.name != item.name)
             ):
-                fail(409, "student_identity_conflict")
+                raise HTTPException(
+                    409,
+                    detail={
+                        "message": "student_identity_conflict",
+                        "details": {"line": line, "student_number": item.student_number},
+                    },
+                )
             if not student:
                 student = Student(name=item.name or item.student_number, student_number=item.student_number)
                 db.add(student)
@@ -304,7 +346,8 @@ async def import_students(data: StudentImport, request: Request):
                     Membership.deleted_at.is_(None),
                 )
             )
-            if not member:
+            membership_created = member is None
+            if membership_created:
                 member = await create_membership(db, student.id, team.id, data)
             created = await db.get(StudentAccount, student.id) is None
             if created:
@@ -318,7 +361,9 @@ async def import_students(data: StudentImport, request: Request):
                 {
                     "student_id": student.id,
                     "student_number": item.student_number,
+                    "name": student.name,
                     "membership_id": member.id,
+                    "membership_created": membership_created,
                     "account_created": created,
                 }
             )
@@ -331,6 +376,7 @@ async def import_students(data: StudentImport, request: Request):
             {
                 "count": len(data.students),
                 "new_accounts": sum(s["account_created"] for s in result["students"]),
+                "new_memberships": sum(s["membership_created"] for s in result["students"]),
                 "initial_password_mode": data.initial_password_mode,
             },
         )

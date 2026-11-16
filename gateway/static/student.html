@@ -26,14 +26,29 @@
               required
           /></label>
           <label
-            >密码<input
-              name="password"
-              type="password"
-              autocomplete="current-password"
-              maxlength="128"
-              required
-          /></label>
-          <button>登录 →</button>
+            >密码<span class="student-password-field"
+              ><input
+                id="student-login-password"
+                aria-label="登录密码"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                maxlength="128"
+                required
+              /><button
+                type="button"
+                class="secondary password-toggle"
+                data-password-target="student-login-password"
+                data-password-label="登录密码"
+                aria-controls="student-login-password"
+                aria-label="显示登录密码"
+                aria-pressed="false"
+              >
+                显示
+              </button></span
+            ></label
+          >
+          <button type="submit">登录 →</button>
         </form>
         <p class="section-note" id="initial-hint"></p>
         <p id="recovery-contact">忘记密码？请联系管理员核实身份后重置。</p>
@@ -42,37 +57,83 @@
         <div class="eyebrow">ACCOUNT SECURITY</div>
         <h1 id="password-title">请先修改初始密码</h1>
         <p>
-          设置至少 16 个字符的新密码，例如一段你容易记住的短句。改密后才能领取
+          设置至少 8 个字符的新密码，例如一段你容易记住的短句。改密后才能领取
           Key。
         </p>
+        <p id="current-password-hint" class="section-note"></p>
         <form id="student-password-form">
           <label
-            >当前密码<input
-              name="current_password"
-              type="password"
-              autocomplete="current-password"
-              required
-              maxlength="128"
-          /></label>
+            >当前密码<span class="student-password-field"
+              ><input
+                id="student-current-password"
+                aria-label="当前密码"
+                name="current_password"
+                type="password"
+                autocomplete="current-password"
+                required
+                maxlength="128"
+              /><button
+                type="button"
+                class="secondary password-toggle"
+                data-password-target="student-current-password"
+                data-password-label="当前密码"
+                aria-controls="student-current-password"
+                aria-label="显示当前密码"
+                aria-pressed="false"
+              >
+                显示
+              </button></span
+            ></label
+          >
           <label
-            >新密码<input
-              name="new_password"
-              type="password"
-              autocomplete="new-password"
-              minlength="16"
-              maxlength="128"
-              required
-          /></label>
+            >新密码<span class="student-password-field"
+              ><input
+                id="student-new-password"
+                aria-label="新密码"
+                name="new_password"
+                type="password"
+                autocomplete="new-password"
+                minlength="8"
+                maxlength="128"
+                required
+              /><button
+                type="button"
+                class="secondary password-toggle"
+                data-password-target="student-new-password"
+                data-password-label="新密码"
+                aria-controls="student-new-password"
+                aria-label="显示新密码"
+                aria-pressed="false"
+              >
+                显示
+              </button></span
+            ></label
+          >
           <label
-            >确认新密码<input
-              name="confirmation"
-              type="password"
-              autocomplete="new-password"
-              minlength="16"
-              maxlength="128"
-              required
-          /></label>
-          <button>保存新密码</button
+            >确认新密码<span class="student-password-field"
+              ><input
+                id="student-confirmation-password"
+                aria-label="确认新密码"
+                name="confirmation"
+                type="password"
+                autocomplete="new-password"
+                minlength="8"
+                maxlength="128"
+                required
+              /><button
+                type="button"
+                class="secondary password-toggle"
+                data-password-target="student-confirmation-password"
+                data-password-label="确认新密码"
+                aria-controls="student-confirmation-password"
+                aria-label="显示确认新密码"
+                aria-pressed="false"
+              >
+                显示
+              </button></span
+            ></label
+          >
+          <button type="submit">保存新密码</button
           ><button id="password-cancel" class="secondary" type="button" hidden>
             返回
           </button>

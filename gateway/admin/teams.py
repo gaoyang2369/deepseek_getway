@@ -74,9 +74,10 @@ async def update_team(team_id: str, data: TeamPatch, request: Request):
         if not t or t.deleted_at:
             fail(404, "team_not_found")
         changes = data.model_dump(exclude_none=True)
+        before = {k: getattr(t, k) for k in changes}
         for k, v in changes.items():
             setattr(t, k, v)
-        audit(db, request, "team_update", t.id, changes)
+        audit(db, request, "team_update", t.id, {"before": before, "after": changes})
         return public_team(t)
 
 

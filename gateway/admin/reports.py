@@ -10,20 +10,23 @@ from ..models import (
     Call,
     Event,
     Price,
+    Rejection,
     Student,
+    now,
 )
 from ..operations import audit
+from ..schemas import EventResolve
 from ..security import fail
 
 router = APIRouter()
 
 
-def filters(query, start, end, team_id, student_id, key_id, model):
+def filters(query, start, end, team_id, student_id, key_id, model, entity=Call):
     for value, column in (
-        (team_id, Call.team_id),
-        (student_id, Call.student_id),
-        (key_id, Call.key_id),
-        (model, Call.model),
+        (team_id, entity.team_id),
+        (student_id, entity.student_id),
+        (key_id, entity.key_id),
+        (model, entity.model),
     ):
         if value:
             query = query.where(column == value)
@@ -38,7 +41,9 @@ def filters(query, start, end, team_id, student_id, key_id, model):
             except ValueError:
                 fail(400, "invalid_time_range")
             query = query.where(
-                Call.started_at >= parsed if comparison == "start" else Call.started_at < parsed
+                (entity.started_at if entity is Call else entity.created_at) >= parsed
+                if comparison == "start"
+                else (entity.started_at if entity is Call else entity.created_at) < parsed
             )
     return query
 
@@ -53,8 +58,12 @@ async def requests(
     student_id: str | None = None,
     key_id: str | None = None,
     model: str | None = None,
+    request_id: str | None = None,
+    status: str | None = None,
+    outcome: str | None = None,
     offset: int = 0,
     limit: int = 200,
+    paginated: bool = False,
 ):
     if offset < 0 or not 1 <= limit <= 10000:
         fail(400, "invalid_pagination")
@@ -70,7 +79,13 @@ async def requests(
             key_id,
             model,
         )
-        rows = (await db.execute(q.order_by(Call.started_at.desc()).offset(offset).limit(limit))).all()
+        for value, column in ((request_id, Call.id), (status, Call.status), (outcome, Call.outcome)):
+            if value:
+                q = q.where(column == value)
+        total = await db.scalar(select(func.count()).select_from(q.subquery())) if paginated else None
+        rows = (
+            await db.execute(q.order_by(Call.started_at.desc(), Call.id).offset(offset).limit(limit))
+        ).all()
         result = [
             {
                 **{
@@ -85,6 +100,9 @@ async def requests(
                         "credential_id",
                         "price_id",
                         "status",
+                        "outcome",
+                        "outcome_reason",
+                        "upstream_id",
                         "reason",
                         "reservation",
                         "cost",
@@ -114,15 +132,28 @@ async def requests(
             "key_id",
             "model",
             "status",
+            "outcome",
+            "outcome_reason",
+            "reason",
+            "upstream_id",
             "cost",
             "reservation",
             "estimated",
             "started_at",
             "ended_at",
+            "input_tokens",
+            "output_tokens",
+            "cache_hit_tokens",
         ]
         writer = csv.writer(output)
         writer.writerow(columns)
         for row in result:
+            usage = row["usage"] or {}
+            row.update(
+                input_tokens=usage.get("prompt_tokens"),
+                output_tokens=usage.get("completion_tokens"),
+                cache_hit_tokens=usage.get("prompt_cache_hit_tokens"),
+            )
             values = []
             for col in columns:
                 value = str(row[col]) if row[col] is not None else ""
@@ -135,7 +166,7 @@ async def requests(
             media_type="text/csv",
             headers={"Content-Disposition": 'attachment; filename="usage.csv"'},
         )
-    return result
+    return {"rows": result, "total": total} if paginated else result
 
 
 @router.get("/statistics")
@@ -156,7 +187,12 @@ async def statistics(
                 Call.key_id,
                 Call.model,
                 func.count().label("calls"),
-                func.count().filter(Call.status == "settled", Call.upstream_status == 200).label("success"),
+                func.count().filter(Call.outcome == "success").label("success"),
+                func.count().filter(Call.outcome == "upstream_failure").label("failures"),
+                func.count().filter(Call.outcome == "in_progress").label("in_progress"),
+                func.count().filter(Call.outcome == "unknown").label("unknown"),
+                func.count().filter(Call.outcome == "client_disconnected").label("client_disconnected"),
+                func.count().filter(Call.outcome == "not_sent").label("not_sent"),
                 func.count().filter(Call.status == "pending").label("pending"),
                 func.coalesce(func.sum(Call.cost), 0).label("cost"),
                 func.coalesce(func.sum(Call.reservation).filter(Call.status != "settled"), 0).label(
@@ -183,44 +219,138 @@ async def statistics(
                 await db.execute(q.group_by(Call.team_id, Call.student_id, Call.key_id, Call.model))
             ).all()
         ]
-        for r in result:
-            r["failures"] = r["calls"] - r["success"]
         return result
 
 
-@router.get("/events")
-async def events(request: Request):
+@router.get("/rejections")
+async def rejections(
+    request: Request,
+    start: str | None = None,
+    end: str | None = None,
+    team_id: str | None = None,
+    student_id: str | None = None,
+    key_id: str | None = None,
+    model: str | None = None,
+    reason: str | None = None,
+    request_id: str | None = None,
+    offset: int = 0,
+    limit: int = 100,
+):
+    if offset < 0 or not 1 <= limit <= 10000:
+        fail(400, "invalid_pagination")
+    q = filters(select(Rejection), start, end, team_id, student_id, key_id, model, Rejection)
+    if reason:
+        q = q.where(Rejection.reason == reason)
+    if request_id:
+        q = q.where(Rejection.id == request_id)
     async with request.app.state.db() as db:
-        return [
+        total = await db.scalar(select(func.count()).select_from(q.subquery()))
+        rows = (
+            await db.scalars(
+                q.order_by(Rejection.created_at.desc(), Rejection.id).offset(offset).limit(limit)
+            )
+        ).all()
+        return {
+            "total": total,
+            "rows": [{c.name: getattr(r, c.name) for c in Rejection.__table__.columns} for r in rows],
+        }
+
+
+def event_severity(kind):
+    if kind in ("pending_usage", "recovery_pending", "reservation_exceeded"):
+        return "action"
+    return "info" if kind == "new_source" else "warning"
+
+
+@router.get("/events")
+async def events(
+    request: Request,
+    resolved: bool | None = None,
+    team_id: str | None = None,
+    offset: int = 0,
+    limit: int = 1000,
+    paginated: bool = False,
+):
+    if offset < 0 or not 1 <= limit <= 1000:
+        fail(400, "invalid_pagination")
+    q = select(Event)
+    if resolved is not None:
+        q = q.where(Event.resolved == resolved)
+    if team_id:
+        q = q.where(Event.team_id == team_id)
+    async with request.app.state.db() as db:
+        total = await db.scalar(select(func.count()).select_from(q.subquery())) if paginated else None
+        rows = [
             {
-                k: getattr(e, k)
-                for k in ("id", "kind", "team_id", "membership_id", "detail", "resolved", "created_at")
+                **{
+                    k: getattr(e, k)
+                    for k in (
+                        "id",
+                        "kind",
+                        "team_id",
+                        "membership_id",
+                        "detail",
+                        "resolved",
+                        "created_at",
+                        "last_seen_at",
+                        "occurrences",
+                        "resolved_at",
+                        "resolved_by",
+                        "resolution",
+                    )
+                },
+                "severity": event_severity(e.kind),
             }
-            for e in (await db.scalars(select(Event).order_by(Event.created_at.desc()).limit(1000))).all()
+            for e in (
+                await db.scalars(q.order_by(Event.last_seen_at.desc(), Event.id).offset(offset).limit(limit))
+            ).all()
         ]
+        return {"rows": rows, "total": total} if paginated else rows
 
 
 @router.post("/events/{event_id}/resolve")
-async def resolve(event_id: str, request: Request):
+async def resolve(event_id: str, data: EventResolve, request: Request):
     async with request.app.state.db() as db, db.begin():
+        # Read the request before locking the event: settlement locks in this
+        # same order. Otherwise a concurrent reconciliation could deadlock.
         e = await db.get(Event, event_id)
         if not e:
             fail(404, "event_not_found")
-        e.resolved = True
-        audit(db, request, "event_resolve", event_id)
+        call_id = e.detail.get("request_id")
+        if e.kind == "pending_usage" and call_id:
+            call = await db.get(Call, call_id, with_for_update=True)
+            if call and call.status != "settled":
+                fail(409, "event_requires_reconciliation")
+        if e.kind == "recovery_pending":
+            if await db.scalar(select(Call.id).where(Call.status == "pending").limit(1)):
+                fail(409, "event_requires_reconciliation")
+        await db.refresh(e, with_for_update=True)
+        if not e.resolved:
+            e.resolved, e.resolved_at = True, now()
+            e.resolved_by = request.app.state.settings.admin_name
+            e.resolution = data.reason
+            audit(db, request, "event_resolve", event_id, {"reason": data.reason})
     return {"ok": True}
 
 
 @router.get("/audit")
-async def audits(request: Request):
+async def audits(request: Request, offset: int = 0, limit: int = 1000, paginated: bool = False):
+    if offset < 0 or not 1 <= limit <= 1000:
+        fail(400, "invalid_pagination")
     async with request.app.state.db() as db:
-        return [
+        total = await db.scalar(select(func.count()).select_from(Audit)) if paginated else None
+        rows = [
             {
                 k: getattr(e, k)
                 for k in ("id", "actor", "action", "target", "detail", "request_id", "created_at")
             }
-            for e in (await db.scalars(select(Audit).order_by(Audit.created_at.desc()).limit(1000))).all()
+            for e in (
+                await db.scalars(
+                    select(Audit).order_by(Audit.created_at.desc(), Audit.id).offset(offset).limit(limit)
+                )
+            ).all()
         ]
+        return {"rows": rows, "total": total} if paginated else rows
 
 
 @router.get("/metrics")

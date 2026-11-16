@@ -7,7 +7,7 @@ from sqlalchemy import delete, update
 
 from gateway.config import Settings
 from gateway.db import database
-from gateway.models import AdminSession, Call, StudentSession, now
+from gateway.models import AdminSession, Call, Rejection, StudentSession, now
 
 
 async def main():
@@ -23,10 +23,18 @@ async def main():
             .where(Call.started_at < now() - timedelta(days=settings.retention_days), Call.ip.is_not(None))
             .values(ip=None)
         )
+        rejection_ips = await db.execute(
+            update(Rejection)
+            .where(
+                Rejection.created_at < now() - timedelta(days=settings.retention_days),
+                Rejection.ip.is_not(None),
+            )
+            .values(ip=None)
+        )
     await engine.dispose()
     print(
         f"Removed expired sessions: {sessions.rowcount + students.rowcount}; "
-        f"anonymized old request IPs: {ips.rowcount}"
+        f"anonymized old request IPs: {ips.rowcount + rejection_ips.rowcount}"
     )
 
 

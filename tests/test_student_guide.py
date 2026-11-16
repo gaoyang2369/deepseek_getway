@@ -78,14 +78,17 @@ async def test_browser_guide_copy_switching_and_runnable_examples(admin, app, li
     await page.goto(base + "/student")
     await page.locator('#student-login-form input[name="username"]').fill("001")
     await page.locator('#student-login-form input[name="password"]').fill("001")
-    await page.locator("#student-login-form button").click()
+    await page.locator('#student-login-form button[type="submit"]').click()
     await page.locator("#student-password").wait_for(state="visible")
     assert not await page.locator("#student-guide").is_visible()
-    await page.locator('input[name="current_password"]').fill("001")
+    await expect(page.locator('input[name="current_password"]')).to_have_value("001")
     await page.locator('input[name="new_password"]').fill("student-guide-test-passphrase-2026")
     await page.locator('input[name="confirmation"]').fill("student-guide-test-passphrase-2026")
-    await page.locator("#student-password-form button").first.click()
+    await page.locator('#student-password-form button[type="submit"]').click()
     await page.locator("#guide-title").wait_for(state="visible")
+    await expect(page.locator("#student-memberships")).to_contain_text("本月已用：¥0.000000（已结算）")
+    for hidden_label in ("个人预算", "；预留", "；可用"):
+        await expect(page.locator("#student-memberships")).not_to_contain_text(hidden_label)
     assert await page.locator("[role=tab]").count() == 6
     member = page.locator(".student-membership").filter(has_text="示例项目组 A")
     async with page.expect_response(lambda r: r.url.endswith("/student/api/keys")) as issued:
@@ -98,12 +101,20 @@ async def test_browser_guide_copy_switching_and_runnable_examples(admin, app, li
     await page.locator("#student-key-dialog").wait_for(state="hidden")
     assert key not in await page.locator("body").inner_text()
     await page.locator("#guide-tab-harness").click()
+    await expect(page.locator("#guide-pane-harness > ol > li")).to_have_count(4)
+    await expect(page.locator("#guide-harness")).not_to_be_visible()
+    await expect(page.locator("#guide-environment")).not_to_be_visible()
+    await expect(page.locator("#guide-pane-harness")).to_contain_text("完成后即可使用")
+    await page.locator("#student-guide").screenshot(path=str(artifact("student-harness-simple.png")))
+    await page.get_by_text("高级配置（可选，界面接入无需操作）", exact=True).click()
+    await expect(page.locator("#guide-harness")).to_be_visible()
     harness = await page.locator("#guide-harness").inner_text()
     assert f'baseURL: "{base}/v1"' in harness
     assert "supportsStore: false" in harness and "supportsDeveloperRole: false" in harness
     assert "maxTokens: 4096" in harness
     assert "max: max" not in harness and key not in harness
     await page.locator("#guide-group").select_option(label="示例项目组 B")
+    await page.get_by_text("高级配置（可选，界面接入无需操作）", exact=True).click()
     harness = await page.locator("#guide-harness").inner_text()
     assert 'id: "lab-other"' in harness and "maxTokens: 512" in harness
     assert "示例项目组 B" in await page.locator("#guide-scope").inner_text()

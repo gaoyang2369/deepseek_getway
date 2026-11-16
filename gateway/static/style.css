@@ -242,6 +242,22 @@ th {
   background: #fafbf8;
   font-weight: 500;
 }
+.table-header-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.table-header-filter select {
+  width: auto;
+  max-width: 170px;
+  margin: 0;
+  padding: 4px 8px;
+  background: transparent;
+  font-size: inherit;
+}
 td {
   max-width: 400px;
   overflow: hidden;
@@ -899,4 +915,84 @@ button.danger-solid,
   #student-title {
     overflow-wrap: anywhere;
   }
+}
+
+.record-tabs:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 20px;
+}
+.record-tabs button {
+  width: auto;
+}
+.record-tabs button.selected {
+  background: var(--ink, #182b25);
+  color: white;
+}
+
+.cards.overview-cards {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.record-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+.record-pagination .pagination-summary {
+  color: #5f6e5c;
+}
+.record-pagination label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  white-space: nowrap;
+}
+.record-pagination select {
+  width: auto;
+  margin: 0;
+}
+.pagination-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.pagination-buttons button {
+  padding: 8px 12px;
+  min-width: 36px;
+}
+.pagination-buttons button[aria-current="page"] {
+  background: #234934;
+  color: white;
+  opacity: 1;
+}
+.pagination-buttons button:disabled {
+  cursor: default;
+}
+.pagination-gap {
+  padding: 0 4px;
+}
+
+.student-password-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+.student-password-field input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  margin-top: 0;
+}
+.student-card .student-password-field button {
+  flex: none;
+  margin: 0;
+  padding: 10px 14px;
 }
