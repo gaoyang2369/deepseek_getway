@@ -10,7 +10,12 @@ import {
   listPagination,
   showError,
 } from "./common.js";
-import { openForm, deleteEntry, batchEnrollmentForm } from "./forms.js";
+import {
+  openForm,
+  deleteEntry,
+  batchEnrollmentForm,
+  editStudentForm,
+} from "./forms.js";
 const studentPage = { offset: 0, size: 10 };
 let studentSearch = "";
 export async function studentAdminView(cache, load) {
@@ -93,6 +98,7 @@ export async function studentAdminView(cache, load) {
               : "已设置密码"
             : "待设置初始密码",
           actions(
+            button("编辑信息", () => editStudentForm(p, load)),
             button("重置密码", () =>
               openForm(
                 "核实身份后生成临时密码",

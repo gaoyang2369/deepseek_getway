@@ -18,6 +18,7 @@ from ..schemas import (
     Enroll,
     PasswordReset,
     StudentImport,
+    StudentUpdate,
 )
 from ..security import fail
 
@@ -201,6 +202,35 @@ async def students(
             for s, must_change in (await db.execute(query)).all()
         ]
         return {"rows": result, "total": total} if paginated else result
+
+
+@router.patch("/students/{student_id}")
+async def update_student(student_id: str, data: StudentUpdate, request: Request):
+    async with request.app.state.db() as db, db.begin():
+        # Serialize with edits, deletion and password recovery for this account.
+        await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:id, 2))"), {"id": student_id})
+        student = await db.get(Student, student_id)
+        if not student or student.kind != "student" or student.deleted_at:
+            fail(404, "student_not_found")
+        # Enrollment/import use the same identity locks. Acquire both in batch order
+        # before updating the row, so a rename cannot race a new enrollment.
+        for number in sorted({student.student_number, data.student_number}):
+            await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:id, 1))"), {"id": number})
+        duplicate = await db.scalar(
+            select(Student.id).where(
+                Student.student_number == data.student_number,
+                Student.deleted_at.is_(None),
+                Student.id != student_id,
+            )
+        )
+        if duplicate:
+            fail(409, "student_number_exists")
+        before = {"name": student.name, "student_number": student.student_number}
+        after = data.model_dump()
+        if before != after:
+            student.name, student.student_number = data.name, data.student_number
+            audit(db, request, "student_update", student_id, {"before": before, "after": after})
+        return {"student_id": student_id, **after}
 
 
 @router.delete("/students/{student_id}")

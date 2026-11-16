@@ -34,6 +34,8 @@ const errorMessages = {
   csrf_required: "登录状态已失效，请刷新页面后重新登录。",
   record_conflict: "已有相同记录，请检查名称或学号后重试。",
   student_identity_conflict: "该学号对应的姓名或身份与现有记录不一致。",
+  student_number_exists: "该学号已被其他人员使用，请核对后重新填写。",
+  student_not_found: "该学生不存在或已删除，请刷新列表。",
   team_unavailable: "项目组不存在或已停用，请重新选择。",
   models_outside_team: "所选模型不在该项目组允许范围内。",
   test_cleanup_requires_mock_environment:

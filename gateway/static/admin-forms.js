@@ -71,6 +71,39 @@ export async function deleteEntry(path, label, impact, load) {
   notice("已删除" + label + "。", "success");
 }
 
+export function editStudentForm(student, load) {
+  openForm(
+    "编辑学生信息",
+    [
+      node(
+        "p",
+        "修改会同步到该学生所属的所有项目组，原账号、个人 Key、预算和使用记录保留。",
+        "section-note",
+      ),
+      field("姓名", "name", "text", student.name),
+      field(
+        "学号（登录账号，保留前导零）",
+        "student_number",
+        "text",
+        student.student_number,
+      ),
+      node(
+        "p",
+        "修改学号后，请通知学生使用新学号登录，密码仍为原密码。尚未修改初始密码的学生也继续使用原初始密码。",
+        "section-note",
+      ),
+    ],
+    async (d) => {
+      await api("/students/" + student.student_id, "PATCH", d);
+      closeModal();
+      await load();
+      notice("学生信息已更新。", "success");
+    },
+  );
+  $("#modal-fields [name=name]").maxLength = 100;
+  $("#modal-fields [name=student_number]").maxLength = 64;
+}
+
 export function showStudentEnrollment(result, number) {
   const message = result.account_created
     ? "网页登录已自动开通。"

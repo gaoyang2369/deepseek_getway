@@ -27,6 +27,7 @@ import {
   budgetForm,
   keyForm,
   batchEnrollmentForm,
+  editStudentForm,
 } from "./forms.js";
 export async function teamsView(cache, load) {
   return [
@@ -209,6 +210,9 @@ export async function membersView(cache, load) {
         badge(m.active),
         money(m.budget) + " / " + m.period,
         actions(
+          ...(m.kind === "student"
+            ? [button("编辑信息", () => editStudentForm(m, load))]
+            : []),
           ...(m.kind === "service"
             ? [button("签发服务 Key", () => keyForm(m, load))]
             : []),

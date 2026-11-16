@@ -66,6 +66,11 @@ class PasswordReset(Strict):
     reason: Reason
 
 
+class StudentUpdate(Strict):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    student_number: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+
+
 class TestUsageClear(Strict):
     confirm_name: Name
 
