@@ -213,7 +213,7 @@ async def settle(
                 )
             )
             for threshold in thresholds:
-                if p.limit and (p.spent + p.reserved) * 100 >= p.limit * threshold:
+                if p.limit and p.spent * 100 >= p.limit * threshold:
                     await event(
                         db,
                         f"budget_{threshold}",
@@ -222,15 +222,6 @@ async def settle(
                         {"period_id": p.id, "spent": p.spent, "reserved": p.reserved, "limit": p.limit},
                         scope=p.id,
                     )
-        if actual > call.reservation:
-            await event(
-                db,
-                "reservation_exceeded",
-                call.team_id,
-                call.membership_id,
-                {"request_id": call.id, "reservation": call.reservation, "cost": actual},
-                scope=call.id,
-            )
         call.cost, call.usage, call.status, call.reason = actual, normalized, "settled", reason
         if manual_audit:
             db.add(Audit(**manual_audit))
@@ -254,7 +245,7 @@ async def settle(
 
 async def recover(factory):
     # Called under a session-level singleton advisory lock at process startup.
-    # A previous process may have sent any reserved request: never refund by TTL.
+    # A previous process may have dispatched a call: keep it for reconciliation.
     async with factory() as db, db.begin():
         await db.execute(
             update(Call)

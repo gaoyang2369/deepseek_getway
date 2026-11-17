@@ -351,7 +351,7 @@ async def test_student_monthly_usage_hides_limits_and_excludes_other_months(admi
     assert not {"limit", "reserved", "available", "budget", "period"} & set(member)
     budgets = (await admin.get("/admin/api/budgets")).json()
     personal = next(p for p in budgets if p["owner_id"] == member_id)
-    assert personal["limit"] == 10000000 and personal["reserved"] > 0
+    assert personal["limit"] == 10000000 and personal["reserved"] == 0
     assert personal["spent"] == 752  # Student display changes no ledger entries.
     assert (
         await admin.post(

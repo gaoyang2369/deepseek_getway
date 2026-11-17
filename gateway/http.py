@@ -79,13 +79,18 @@ class Guard:
             await send(message)
 
         if scope["method"] in ("POST", "PATCH", "PUT"):
+            limit = (
+                self.settings.max_chat_body
+                if scope["path"] == "/v1/chat/completions"
+                else self.settings.max_body
+            )
             body = bytearray()
             while True:
                 msg = await receive()
                 if msg["type"] == "http.disconnect":
                     return
                 body.extend(msg.get("body", b""))
-                if len(body) > self.settings.max_body:
+                if len(body) > limit:
                     scope["state"]["rejection_reason"] = "request_too_large"
                     return await JSONResponse(
                         {

@@ -359,18 +359,13 @@ async def metrics(request: Request):
         current = await db.scalar(
             select(func.count()).select_from(Call).where(Call.status.in_(("reserved", "running")))
         )
-        pending, amount = (
-            await db.execute(
-                select(func.count(), func.coalesce(func.sum(Call.reservation), 0)).where(
-                    Call.status == "pending"
-                )
-            )
-        ).one()
+        pending = await db.scalar(select(func.count()).select_from(Call).where(Call.status == "pending"))
         return {
             **request.app.state.metrics,
             "admission_batches": request.app.state.admission.stats,
             "admission_queue": request.app.state.admission.pending,
             "current_concurrency": current,
             "pending_requests": pending,
-            "pending_micro_cny": amount,
+            # No reservation estimate exists; unknown cost is not a zero bill.
+            "pending_micro_cny": None if pending else 0,
         }

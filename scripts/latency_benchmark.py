@@ -251,7 +251,7 @@ async def benchmark(args, env, gateway_port, mock_port):
                 ).fetchone()
                 reserved = db.execute("SELECT coalesce(sum(reserved),0) FROM budget_periods").fetchone()[0]
                 ledger = db.execute("SELECT count(*) FROM ledger").fetchone()[0]
-            assert counts[0] == counts[1] == len(calls_seen) and reserved == 0 and ledger == 4 * counts[0]
+            assert counts[0] == counts[1] == len(calls_seen) and reserved == 0 and ledger == 2 * counts[0]
             return {
                 "mode": "isolated same-mock real-socket SDK benchmark; no paid calls",
                 "rounds": args.rounds,

@@ -20,7 +20,7 @@ Key 仅在领取或轮换成功时完整显示一次。保存后可以退出网�
 | 模型 ID | 当前项目组允许的模型，或用该 Key 查询 `/v1/models` 得到的 ID |
 | 完整聊天地址 | Base URL 后追加 `/chat/completions` |
 
-SDK 的 `base_url` / `baseURL` 填到 `/v1` 即可，不要再追加 `/chat/completions`。本网关支持文本、SSE 流式和客户端 `function` 工具调用；目前不提供 OpenAI Responses、Anthropic Messages、图片/文件上传、Embeddings 和 DeepSeek 官方内置联网接口。不要把上游官网的全部功能当成本网关的功能。
+SDK 的 `base_url` / `baseURL` 填到 `/v1` 即可，不要再追加 `/chat/completions`。本网关支持文本、Flash 的 `image_url` 图片、SSE 流式和客户端 `function` 工具调用；目前不提供 OpenAI Responses、Anthropic Messages、Files 文件上传、Embeddings 和 DeepSeek 官方内置联网接口。不要把上游官网的全部功能当成本网关的功能。
 
 DeepSeek 官方的 [首次调用说明](https://api-docs.deepseek.com/zh-cn/) 提供 OpenAI 格式示例；以下示例已按本网关接口范围改写。核对日期：2026-11-14。
 
@@ -99,6 +99,32 @@ with client.chat.completions.create(
                 print(choice.delta.content, end='', flush=True)
 ```
 
+## Python 图片输入与长上下文
+
+聊天请求体上限为 **48 MiB**（包含 JSON 和 Base64 编码），不再有 128 KiB 输入或 500 条消息的额外限制。模型实际上下文容量由上游决定。项目组的 `32768` 等输出上限只控制生成长度，不是输入窗口；Agent 的历史、工具定义和工具结果仍需一起符合模型上下文限制。
+
+沿用上面的 `client`，选择本组已开放的 `deepseek-flash`，可直接发送本地 PNG：
+
+```python
+import base64
+from pathlib import Path
+
+image = base64.b64encode(Path('example.png').read_bytes()).decode('ascii')
+reply = client.chat.completions.create(
+    model='deepseek-flash',
+    messages=[{'role': 'user', 'content': [
+        {'type': 'text', 'text': '请分析这张图片。'},
+        {'type': 'image_url', 'image_url': {
+            'url': f'data:image/png;base64,{image}', 'detail': 'auto',
+        }},
+    ]}],
+    max_tokens=2048,
+)
+print(reply.choices[0].message.content)
+```
+
+也可把 `url` 换成上游可访问的 HTTP(S) 图片链接。支持 JPEG、PNG、GIF、WebP，单张图片最多 32 MiB，单次最多 600 张；`detail` 可为 `auto/low/high/original`。图片可以出现在 user、system、tool 消息中，不能放在 assistant 中。图片尺寸、真实格式等由上游校验，网关不会自行下载 URL。`deepseek-v4-pro` 不支持图片，会返回 `400 model_does_not_support_images`。本轮未开放 Files 上传及 `file_id` 引用。能力依据 [官方图像理解指南](https://api-docs.deepseek.com/zh-cn/guides/vision/)（2026-11-17 核对）。
+
 ## Node.js
 
 安装 `npm install openai`，保存为 `demo.mjs`，运行 `node demo.mjs`：
@@ -143,7 +169,7 @@ console.log(reply.choices[0].message.content);
 <details>
 <summary>高级配置（可选，界面接入无需操作）</summary>
 
-只在需要手动配置、使用环境变量凭据或调整高级参数时参考。输入类型只选 `text`；获取模型列表失败时，也可手动添加当前组的模型 ID。
+只在需要手动配置、使用环境变量凭据或调整高级参数时参考。Flash 输入类型选 `text` 和 `image`，Pro 只选 `text`；获取模型列表失败时，也可手动添加当前组的模型 ID。
 
 `dsh web` 是启动 Harness Web 界面的命令，不是填写网关配置后的额外步骤。如果主动选择环境变量凭据，在启动 Harness 的终端设置 `LAB_LLM_API_KEY` 后启动。若使用设置界面保存的 Key，保留该界面生成的凭据引用，不要用下面的 `apiKeyEnv` 覆盖它。
 
@@ -172,7 +198,7 @@ console.log(reply.choices[0].message.content);
           requiresReasoningContentOnAssistantMessages: true
         models:
           - id: 本组开放的模型ID
-            input: [text]
+            input: [text]  # deepseek-flash 可改为 [text, image]
             maxTokens: 2048
             reasoningEfforts:
               "off": null
@@ -180,11 +206,11 @@ console.log(reply.choices[0].message.content);
               high: high
 ```
 
-网关已兼容 Harness 默认参数：接受 `store: false` 并在转发前移除；`developer` 指令转换为 DeepSeek 的 `system`；`max_completion_tokens` 转换为 `max_tokens`，较大的客户端额度会在预算准入前压到项目组上限。`store: true` 不支持。模型列表会返回该组的输出上限，重新获取模型可更新客户端默认值。
+网关已兼容 Harness 默认参数：接受 `store: false` 并在转发前移除；`developer` 指令转换为 DeepSeek 的 `system`；`max_completion_tokens` 转换为 `max_tokens`，较大的客户端输出额度会压到项目组输出上限（不是上下文长度）。`store: true` 不支持。模型列表会返回该组的输出上限，重新获取模型可更新客户端默认值。
 
 可选兼容项依据 Harness 的 [配置字段参考](https://deepseek-harness.github.io/deepseek-harness/en/reference/config-catalog)：`supportsStore: false`、`supportsDeveloperRole: false` 和 `maxTokensField: max_tokens` 可减少转换；`thinkingFormat: deepseek` 对接思考开关。推理等级支持 `none / low / high / max`，并依据 [DeepSeek 官方参数说明](https://api-docs.deepseek.com/api/create-chat-completion/) 将 `minimal` 映射到 `low`、`medium / xhigh` 映射到 `high`。项目组原有输出上限不变。
 
-本地文件、终端、函数工具与模型请求是不同环节。此网关可承载相应的文本/函数调用请求，但未开放 DeepSeek 官网额外的上传、图片、联网和 Responses API。不要直接按默认官网能力开启这些功能。
+本地文件、终端、函数工具与模型请求是不同环节。此网关可承载文本、image_url 图片及函数调用请求，但未开放 DeepSeek 官网额外的 Files 上传、联网和 Responses API。不要直接按默认官网能力开启这些功能。
 
 验证范围：Python、HTTP 与工具调用可用模拟上游验证；Node.js 示例做语法检查；Harness 配置按官方字段和本网关协议适配，尚未完成 Harness 完整应用的端到端验收。
 
@@ -197,10 +223,10 @@ console.log(reply.choices[0].message.content);
 | 连接失败 | 检查运行脚本或 Harness 的设备能否访问网关，校外检查 VPN |
 | 401 | 检查个人 Key 是否错误、到期或已轮换 |
 | 403 | 检查组/成员状态、模型白名单及是否使用对应组的 Key |
-| 402 | 组或个人预算不足以覆盖预留，降低输出上限或联系管理员 |
+| 402 | 组或个人已结算费用已达到预算，联系管理员或等待下一预算周期 |
 | 429 | 降低请求频率和并发，等待后再试 |
 | 404 / 405 | 检查是否重复 `/v1`，是否误用 Responses / Anthropic 模式 |
-| 413 / 422 | 413 请缩短上下文；422 查看 `error.details` 中的字段路径与固定错误码。未知参数、`store: true` 和未开放多模态仍会被拒绝 |
+| 413 / 422 | 413 表示请求体超过 48 MiB（含 Base64 编码）；422 查看 `error.details` 中的字段路径与固定错误码。未知参数、`store: true`、文件引用和音视频仍会被拒绝 |
 | 502 / 503 | 保留 `X-Request-ID` 联系管理员，避免无条件重复请求 |
 
 本机示例使用环境变量保存 Key，页面复制的配置中不会包含真实 Key。不要把个人 Key 写进项目仓库或公开日志。客户端断开或超时不代表上游没有执行，缺少最终 usage 的请求可能进入待核对。

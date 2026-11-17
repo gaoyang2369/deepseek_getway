@@ -134,7 +134,7 @@ class AdmissionBatcher:
 
         from .billing import settle
 
-        # This job never reached dispatch. On persistent DB failure its reservation
+        # This job never reached dispatch. On persistent DB failure its call record
         # remains durable and recovery will conservatively mark it pending.
         for attempt in range(3):
             try:
@@ -144,7 +144,7 @@ class AdmissionBatcher:
                 if attempt < 2:
                     await asyncio.sleep(0.05 * (attempt + 1))
         self.stats["cleanup_failures"] += 1
-        log.error("unsent_reservation_pending request_id=%s", call_id)
+        log.error("unsent_call_pending request_id=%s", call_id)
 
     async def _execute(self, jobs):
         async with self.factory()() as db, db.begin():
@@ -226,10 +226,6 @@ async def admit(app, authorization, body, request_id, ip, started, request_state
     rates = await app.state.redis.eval(
         RATE_LUA, 2, f"rate:{{{team_id}}}:team", f"rate:{{{team_id}}}:{member_id}"
     )
-    # Include headroom for server-added/replaced max_tokens. No prompt goes to SQL.
-    input_bound = (
-        len(json.dumps(body, ensure_ascii=False).encode()) + 64 * len(body["messages"]) + 256 + 64
-    ) * 2
     result = await app.state.admission.submit(
         team_id,
         {
@@ -238,7 +234,8 @@ async def admit(app, authorization, body, request_id, ip, started, request_state
             "member_attempts": rates[1],
             "model": body["model"],
             "output": body.get("max_tokens"),
-            "input_bound": input_bound,
+            # Legacy SQL argument; admission no longer estimates or reserves money.
+            "input_bound": 0,
             "request_id": request_id,
             "ip": ip,
         },

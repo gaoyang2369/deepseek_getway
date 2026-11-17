@@ -56,7 +56,7 @@ async def test_mixed_batch_keeps_individual_budget_rejections(admin, app):
     assert [r.status_code for r in responses] == [200 if i % 2 == 0 else 402 for i in range(10)]
     async with app.state.db() as db:
         assert await db.scalar(select(func.count()).select_from(Call)) == 5
-        assert await db.scalar(select(func.count()).select_from(Ledger)) == 20
+        assert await db.scalar(select(func.count()).select_from(Ledger)) == 10
         assert await db.scalar(select(func.sum(BudgetPeriod.reserved))) == 0
     assert len(received) == 5
 
@@ -88,7 +88,7 @@ async def test_cancel_after_batch_commit_refunds_only_never_dispatched_request(a
     assert not received
 
 
-async def test_failed_batch_commit_rolls_back_every_reservation(admin, app, monkeypatch):
+async def test_failed_batch_commit_rolls_back_every_admission(admin, app, monkeypatch):
     import json
 
     await price(admin)

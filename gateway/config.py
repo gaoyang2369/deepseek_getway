@@ -34,7 +34,7 @@ class Settings:
     trusted_proxies: tuple[str, ...] = ()
     session_seconds: int = 3600
     max_body: int = 262144
-    max_input_bytes: int = 131072
+    max_chat_body: int = 48 * 1024 * 1024
     timeout: float = 180
     stream_heartbeat_seconds: float = 15
     retention_days: int = 90

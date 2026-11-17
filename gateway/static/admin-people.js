@@ -47,7 +47,7 @@ export async function teamsView(cache, load) {
             ]),
             field("每分钟请求数", "rpm", "number", "60"),
             field("最大并发", "concurrency", "number", "10"),
-            field("单次输出 Token 上限", "max_output", "number", "2048"),
+            field("单次输出 Token 上限（不是上下文长度）", "max_output", "number", "2048"),
           ],
           async (d) => {
             await api("/teams", "POST", {

@@ -45,7 +45,7 @@ PUBLIC_URL=http://服务器实际IP:18081
 
 校园私网是否可从校外访问取决于路由，不由域名或 API Key 解决。可以采用学校允许的客户端 VPN、受控组网、公网部署或获准的加密隧道；需验证客户端能访问网关 TCP 端口，网页型 VPN 不一定支持 SDK。运行客户端期间需要持续保持网络可达。
 
-`proxy/nginx.conf.example` 是待集成模板，不要覆盖现有 80/443 服务。配置真实证书、管理网段和 `proxy/lab-gateway-headers.conf`；模板开放文本 API 与学生入口，管理路径默认 deny all，其余路径 404。流式路径禁用缓冲、缓存和 gzip，读取超时 240 秒。`TRUSTED_PROXIES` 只填写实际可信代理地址，容器看到的来源可能是 bridge 网关。
+`proxy/nginx.conf.example` 是待集成模板，不要覆盖现有 80/443 服务。配置真实证书、管理网段和 `proxy/lab-gateway-headers.conf`；模板开放聊天 API（含图片输入）与学生入口，管理路径默认 deny all，其余路径 404。流式路径禁用缓冲、缓存和 gzip，读取超时 240 秒。`TRUSTED_PROXIES` 只填写实际可信代理地址，容器看到的来源可能是 bridge 网关。
 
 ## 上线与回滚
 

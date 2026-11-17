@@ -165,7 +165,7 @@ class Call(Base):
     member_period_id: Mapped[str] = mapped_column(ForeignKey("budget_periods.id"))
     team_period_id: Mapped[str] = mapped_column(ForeignKey("budget_periods.id"))
     model: Mapped[str] = mapped_column(String(128))
-    status: Mapped[str] = mapped_column(String(24), default="reserved", index=True)
+    status: Mapped[str] = mapped_column(String(24), default="running", index=True)
     outcome: Mapped[str] = mapped_column(String(24), default="in_progress", server_default="in_progress")
     outcome_reason: Mapped[str | None] = mapped_column(String(64))
     reason: Mapped[str | None] = mapped_column(String(64))

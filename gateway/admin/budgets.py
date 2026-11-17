@@ -63,7 +63,7 @@ async def update_budget(owner_type: str, owner_id: str, data: BudgetUpdate, requ
             "limit": p.limit,
             "spent": p.spent,
             "reserved": p.reserved,
-            "available": p.limit - p.spent - p.reserved,
+            "available": p.limit - p.spent,
         }
 
 
@@ -85,7 +85,7 @@ async def budgets(request: Request):
                         "reserved",
                     )
                 },
-                "available": p.limit - p.spent - p.reserved,
+                "available": p.limit - p.spent,
                 "team_id": team_id,
             }
             for p, team_id in (

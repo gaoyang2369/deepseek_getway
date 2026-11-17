@@ -33,8 +33,8 @@ const outcomes = {
   unknown: "结果未知",
 };
 const settlements = {
-  reserved: "已预留",
-  running: "已预留",
+  reserved: "进行中",
+  running: "进行中",
   pending: "待核对",
   settled: "已结算",
 };
@@ -164,7 +164,7 @@ export async function overviewView(cache, load) {
     ["已准入调用", stats.reduce((a, r) => a + r.calls, 0)],
     ["被拒绝请求", rejected.total],
     ["已结算费用", money(stats.reduce((a, r) => a + r.cost, 0))],
-    ["待核对金额", money(metrics.pending_micro_cny)],
+    ["待核对请求", metrics.pending_requests],
     ["当前进行中", metrics.current_concurrency],
   ]) {
     const card = node("div", undefined, "card");
@@ -229,7 +229,7 @@ export async function budgetsView(cache, load) {
   return [
     node(
       "p",
-      "这里同时展示项目组与个人的周期预算。组记录汇总全组使用情况，个人记录用于个人限额；两者是同一笔调用的两个归属，请勿相加。可用金额 = 预算上限 − 已结算 − 未结算预留。",
+      "这里同时展示项目组与个人的周期预算，同一笔调用的两个归属请勿相加。剩余额度 = 预算上限 − 已结算。每次请求前检查已用费用，不预留预算；进行中请求结算后可能超出上限，随后停止新请求。",
       "section-note",
     ),
     toolbar(
@@ -261,8 +261,7 @@ export async function budgetsView(cache, load) {
         "结束",
         "预算上限",
         "已结算",
-        "预留",
-        "可用",
+        "剩余额度",
         ...(cache.config.test_cleanup_enabled ? ["操作"] : []),
       ],
       rows.map((p) => [
@@ -275,7 +274,6 @@ export async function budgetsView(cache, load) {
         date(p.ends_at),
         money(p.limit),
         money(p.spent),
-        money(p.reserved),
         money(p.available),
         ...(cache.config.test_cleanup_enabled
           ? [
@@ -371,7 +369,6 @@ export async function requestsView(cache, load) {
         "调用结果",
         "结算状态",
         "费用",
-        "准入预留",
         "输入 / 输出",
         "操作",
       ],
@@ -384,7 +381,6 @@ export async function requestsView(cache, load) {
         r.cost === null
           ? "待核对"
           : money(r.cost) + (r.estimated ? " 估算" : ""),
-        money(r.reservation),
         (r.usage?.prompt_tokens ?? "—") +
           " / " +
           (r.usage?.completion_tokens ?? "—"),

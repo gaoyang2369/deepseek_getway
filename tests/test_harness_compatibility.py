@@ -55,7 +55,7 @@ async def capture_mock_requests(app):
     return requests
 
 
-async def test_harness_request_streams_and_clamps_before_budget_reservation(admin, app):
+async def test_harness_request_streams_and_clamps_output(admin, app):
     await price(admin)
     group = await team(admin, max_output=1536)
     person, _ = await student(admin, group)
@@ -76,7 +76,7 @@ async def test_harness_request_streams_and_clamps_before_budget_reservation(admi
     async with app.state.db() as db:
         call = await db.scalar(select(Call))
         assert call.status == "settled" and call.cost == 188
-        assert call.reservation < 20000  # At 128,000 tokens the old ceiling would reserve >384,000.
+        assert call.reservation == 0
 
 
 async def test_unsupported_fields_report_safe_paths_without_inputs(admin, app, caplog):

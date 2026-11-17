@@ -69,7 +69,7 @@ async def test_A04_A05_A06_key_lifecycle(admin, app):
     assert (await admin.patch(f"/admin/api/teams/{t['id']}", json={"active": False})).status_code == 200
 
 
-async def test_A07_protocol_tools_and_input_limits(admin):
+async def test_A07_protocol_tools_and_input_limits(admin, app):
     await price(admin)
     t = await team(admin)
     s, _ = await student(admin, t)
@@ -78,50 +78,49 @@ async def test_A07_protocol_tools_and_input_limits(admin):
         assert (await admin.post(path, json={})).status_code == 404
     assert (await completion(admin, s["key"], tools=[{"type": "web_search"}])).status_code == 422
     assert (
-        await completion(admin, s["key"], content=[{"type": "image_url", "image_url": {"url": "http://x"}}])
+        await completion(
+            admin, s["key"], content=[{"type": "input_audio", "input_audio": {"data": "invalid"}}]
+        )
     ).status_code == 422
     assert (await completion(admin, s["key"], max_tokens=0)).status_code == 422
-    assert (await completion(admin, s["key"], "x" * 300000)).status_code == 413
+    assert (await completion(admin, s["key"], "x" * app.state.settings.max_chat_body)).status_code == 413
     assert len(received) == 0
 
 
 @pytest.mark.parametrize("owner_type", ["team", "membership"])
-async def test_A08_atomic_reservations(admin, app, owner_type):
+async def test_A08_concurrent_calls_use_settled_spending_only(admin, app, owner_type):
     await price(admin)
     t = await team(admin)
-    s, _ = await student(admin, t)
+    s, _ = await student(admin, t, concurrency=100, rpm=10000)
     owner_id = t["id"] if owner_type == "team" else s["membership_id"]
-    # Determine the exact conservative reservation through real admission, then
-    # configure one-and-a-half reservations and race 30 independent transactions.
-    body = {"model": "lab-chat", "messages": [{"role": "user", "content": "hello"}]}
-    first, _, _ = await admit(
-        app, "Bearer " + s["key"], dict(body), str(uuid.uuid4()), "127.0.0.1", time.perf_counter()
-    )
-    await settle(app.state.db, first.id, manual_cost=0, reason="not_sent_test")
     r = await admin.post(
         f"/admin/api/budgets/{owner_type}/{owner_id}",
-        json={"amount": first.reservation * 3 // 2, "reason": "race test"},
+        json={"amount": 1, "reason": "one micro-yuan remaining"},
     )
-    assert r.status_code == 200, r.text
-
-    async def reserve():
-        try:
-            return await admit(
-                app, "Bearer " + s["key"], dict(body), str(uuid.uuid4()), "127.0.0.1", time.perf_counter()
-            )
-        except Exception as e:
-            return e
-
-    results = await asyncio.gather(*(reserve() for _ in range(30)))
-    successes = [x for x in results if isinstance(x, tuple)]
-    assert len(successes) == 1, [type(x).__name__ for x in results]
+    assert r.status_code == 200
+    body = {"model": "lab-chat", "messages": [{"role": "user", "content": "hello"}]}
+    results = await asyncio.gather(
+        *(
+            admit(app, "Bearer " + s["key"], dict(body), str(uuid.uuid4()), "127.0.0.1", time.perf_counter())
+            for _ in range(30)
+        )
+    )
+    assert len(results) == 30
+    assert all(call.reservation == 0 and call.status == "running" for call, _, _ in results)
+    async with app.state.db() as db:
+        assert await db.scalar(select(func.sum(BudgetPeriod.reserved))) == 0
+        assert await db.scalar(select(func.count()).select_from(Ledger).where(Ledger.kind == "reserve")) == 0
+    # Completion may overshoot. Already admitted requests still settle, exactly once.
+    await asyncio.gather(*(settle(app.state.db, call.id, manual_cost=188) for call, _, _ in results))
+    assert (await completion(admin, s["key"])).status_code == 402
     async with app.state.db() as db:
         p = await db.scalar(
             select(BudgetPeriod).where(
                 BudgetPeriod.owner_type == owner_type, BudgetPeriod.owner_id == owner_id
             )
         )
-        assert p.reserved == first.reservation and p.spent == 0 and p.reserved <= p.limit
+        assert p.spent == 30 * 188 and p.reserved == 0
+        assert await settle(app.state.db, results[0][0].id, manual_cost=1000) is False
 
 
 def test_A09_beijing_calendar():
@@ -174,7 +173,7 @@ async def test_A12_A13_pending_and_idempotent_reconciliation(admin, app):
         assert await db.scalar(select(func.count()).select_from(Ledger).where(Ledger.kind == "settle")) == 2
 
 
-async def test_A14_recovery_preserves_reservations(admin, app):
+async def test_A14_recovery_preserves_unbilled_calls(admin, app):
     await price(admin)
     s, _ = await student(admin, await team(admin))
     call, _, _ = await admit(

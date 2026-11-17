@@ -46,12 +46,12 @@ async def test_budget_rejections_are_durable_counted_and_attributed(admin, app, 
     assert not received
 
 
-async def test_invalid_and_revoked_keys_validation_and_large_bodies_are_recorded(admin):
+async def test_invalid_and_revoked_keys_validation_and_large_bodies_are_recorded(admin, app):
     await price(admin)
     s, _ = await student(admin, await team(admin))
     assert (await completion(admin, "unknown-secret", "private-content")).status_code == 401
     assert (await completion(admin, s["key"], max_tokens=0)).status_code == 422
-    assert (await completion(admin, s["key"], "x" * 1100000)).status_code == 413
+    assert (await completion(admin, s["key"], "x" * app.state.settings.max_chat_body)).status_code == 413
     assert (await admin.post(f"/admin/api/keys/{s['key_id']}/revoke", json={})).status_code == 200
     assert (await completion(admin, s["key"])).status_code == 401
     data = (await admin.get("/admin/api/rejections")).json()

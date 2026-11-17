@@ -43,7 +43,7 @@ async def main():
         ).json()
         interrupted = next(row for row in rows if row["id"] == request_id)
         assert interrupted["status"] == "pending" and interrupted["cost"] is None, interrupted["status"]
-        assert interrupted["reservation"] > 0
+        assert interrupted["reservation"] == 0
         assert rows[0]["status"] == "pending" and rows[0]["reason"] == "client_disconnected"
     async with AsyncOpenAI(
         base_url=base_url + "/v1",
@@ -83,8 +83,8 @@ async def main():
         "network": "real localhost sockets",
         "incremental_sse": "passed",
         "first_delta_seconds": round(first, 3),
-        "stream_disconnect": "pending, reservation retained",
-        "nonstream_disconnect": "pending, reservation retained",
+        "stream_disconnect": "pending, cost unknown, no budget hold",
+        "nonstream_disconnect": "pending, cost unknown, no budget hold",
         "official_python_sdk": "nonstream, stream and client function round trip passed",
         "paid_calls": 0,
     }

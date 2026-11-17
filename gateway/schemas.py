@@ -1,5 +1,8 @@
+import base64
+import binascii
 from datetime import datetime
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
@@ -150,6 +153,33 @@ class EventResolve(Strict):
     reason: Reason = "已检查"
 
 
+def validate_image_url(url):
+    if not isinstance(url, str) or not url:
+        raise ValueError("image URL is required")
+    if url.startswith("data:"):
+        header, separator, encoded = url.partition(",")
+        if (
+            header not in {f"data:image/{format_};base64" for format_ in ("jpeg", "png", "gif", "webp")}
+            or not separator
+            or not encoded
+        ):
+            raise ValueError("unsupported image data URL")
+        # Check the encoded bound before allocating the decoded image. Actual
+        # format and dimensions are validated by DeepSeek, not fetched locally.
+        if len(encoded) > ((32 * 1024 * 1024 + 2) // 3) * 4:
+            raise ValueError("image exceeds 32 MiB")
+        try:
+            size = len(base64.b64decode(encoded, validate=True))
+        except (ValueError, binascii.Error):
+            raise ValueError("invalid image base64") from None
+        if size > 32 * 1024 * 1024:
+            raise ValueError("image exceeds 32 MiB")
+    else:
+        parsed = urlsplit(url)
+        if len(url) > 8192 or parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("unsupported image URL")
+
+
 class Message(Strict):
     role: Literal["system", "user", "assistant", "tool"]
     content: str | list[dict] | None = None
@@ -167,13 +197,27 @@ class Message(Strict):
 
     @field_validator("content")
     @classmethod
-    def text_only(cls, value):
+    def content_parts(cls, value, info):
         if isinstance(value, list):
-            if not value or any(
-                set(x) != {"type", "text"} or x.get("type") != "text" or not isinstance(x.get("text"), str)
-                for x in value
-            ):
-                raise ValueError("only text content blocks are enabled")
+            if not value:
+                raise ValueError("content blocks cannot be empty")
+            for part in value:
+                if part.get("type") == "text":
+                    if set(part) != {"type", "text"} or not isinstance(part["text"], str):
+                        raise ValueError("invalid text content block")
+                elif part.get("type") == "image_url":
+                    image = part.get("image_url")
+                    if (
+                        info.data.get("role") == "assistant"
+                        or set(part) != {"type", "image_url"}
+                        or not isinstance(image, dict)
+                        or set(image) - {"url", "detail"}
+                        or ("detail" in image and image["detail"] not in ("auto", "low", "high", "original"))
+                    ):
+                        raise ValueError("invalid image content block")
+                    validate_image_url(image.get("url"))
+                else:
+                    raise ValueError("only text and image_url content blocks are enabled")
         return value
 
     @field_validator("tool_calls")
@@ -195,11 +239,11 @@ class Message(Strict):
 
 class Chat(Strict):
     model: str = Field(min_length=1, max_length=128)
-    messages: list[Message] = Field(min_length=1, max_length=500)
+    messages: list[Message] = Field(min_length=1)
     stream: bool = False
     stream_options: dict | None = None
-    # Admission clamps either client ceiling to the group's max_output before
-    # reserving budget. Accept clients' generous defaults within SQL int bounds.
+    # Admission clamps either client ceiling to the group's max_output.
+    # Accept clients' generous defaults within SQL int bounds.
     max_tokens: int | None = Field(default=None, strict=True, ge=1, le=2147483647)
     max_completion_tokens: int | None = Field(default=None, strict=True, ge=1, le=2147483647)
     store: Literal[False] | None = Field(default=None, exclude=True)
@@ -215,6 +259,19 @@ class Chat(Strict):
     reasoning_effort: Literal["low", "high", "max", "none"] | None = None
     logprobs: bool | None = None
     top_logprobs: int | None = Field(default=None, ge=0, le=20)
+
+    @field_validator("messages")
+    @classmethod
+    def image_count(cls, value):
+        count = sum(
+            part.get("type") == "image_url"
+            for message in value
+            if isinstance(message.content, list)
+            for part in message.content
+        )
+        if count > 600:
+            raise ValueError("at most 600 images per request")
+        return value
 
     @field_validator("store", mode="before")
     @classmethod

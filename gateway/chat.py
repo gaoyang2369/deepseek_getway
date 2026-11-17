@@ -23,6 +23,8 @@ log = logging.getLogger("lab_gateway")
 
 router = APIRouter()
 
+IMAGE_MODELS = {"deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"}
+
 
 @router.get("/v1/models")
 async def models(request: Request):
@@ -33,10 +35,10 @@ async def models(request: Request):
     async with factory() as db:
         key, member, _, team = await authenticate(db, request.headers.get("authorization"), settings)
         allowed = set(key.models) & set(member.models) & set(team.models)
-        priced = set(
+        priced = dict(
             (
-                await db.scalars(
-                    select(Price.model).where(
+                await db.execute(
+                    select(Price.model, Price.upstream_model).where(
                         Price.starts_at <= now(), (Price.ends_at.is_(None)) | (Price.ends_at > now())
                     )
                 )
@@ -52,8 +54,15 @@ async def models(request: Request):
                 "owned_by": "lab",
                 "max_tokens": team.max_output,
                 "max_output_tokens": team.max_output,
+                **(
+                    {"input": ["text", "image"], "context_window": 1_000_000}
+                    if priced[m] in IMAGE_MODELS
+                    else {"input": ["text"], "context_window": 1_000_000}
+                    if priced[m] == "deepseek-v4-pro"
+                    else {}
+                ),
             }
-            for m in sorted(allowed & priced)
+            for m in sorted(allowed & priced.keys())
         ],
     }
 
@@ -61,7 +70,7 @@ async def models(request: Request):
 async def finalize(app, call_id, team_id, **kwargs):
     settings, factory = app.state.settings, app.state.db
     # Shield client cancellation, then bounded retries. If DB remains down, the
-    # already committed reservation survives and restart recovery makes it visible.
+    # durable call survives and restart recovery makes it visible for reconciliation.
     for attempt in range(3):
         try:
             async with app.state.admission.turn(team_id).enter():
@@ -93,8 +102,6 @@ async def chat(data: Chat, request: Request):
     if request.query_params:
         fail(400, "query_parameters_not_supported")
     body = data.model_dump(exclude_none=True)
-    if len(json.dumps(body, ensure_ascii=False).encode()) > settings.max_input_bytes:
-        fail(413, "input_too_large")
     if "max_completion_tokens" in body:
         if "max_tokens" in body:
             fail(400, "ambiguous_output_limit")
@@ -114,6 +121,15 @@ async def chat(data: Chat, request: Request):
 
     async def finish_call(**kwargs):
         await finish_safely(app, call.id, team_id=call.team_id, admission_ms=call.admission_ms, **kwargs)
+
+    if upstream_model == "deepseek-v4-pro" and any(
+        part.get("type") == "image_url"
+        for message in body["messages"]
+        if isinstance(message.get("content"), list)
+        for part in message["content"]
+    ):
+        await finish_call(manual_cost=0, reason="not_sent")
+        fail(400, "model_does_not_support_images")
 
     try:
         upstream_key = app.state.cipher.decrypt(encrypted.encode()).decode()

@@ -1,4 +1,4 @@
-"""SIGKILL an isolated gateway mid-stream, restart, and verify durable reservation recovery."""
+"""SIGKILL an isolated gateway mid-stream, restart, and verify durable unbilled call recovery."""
 
 import asyncio
 import json
@@ -136,7 +136,7 @@ async def main():
                 before = db.execute(
                     "SELECT status,reservation,member_period_id FROM calls WHERE id=%s", (request_id,)
                 ).fetchone()
-            assert before[0] == "reserved" and before[1] > 0
+            assert before[0] == "running" and before[1] == 0
             at = time.perf_counter()
             process = start()
             await wait_ready(client, process)
@@ -149,13 +149,13 @@ async def main():
                 ).fetchone()
                 ledgers = db.execute("SELECT kind,count(*) FROM ledger GROUP BY kind").fetchall()
             assert after == ("pending", before[1], None) and budget == (0, before[1])
-            assert ledgers == [("reserve", 2)]
+            assert ledgers == []
             report = {
                 "signal": "SIGKILL",
                 "database": name,
                 "recovered_status": after[0],
-                "reservation_preserved": True,
-                "no_automatic_refund": True,
+                "unbilled_call_preserved": True,
+                "no_invented_charge": True,
                 "no_double_settlement": True,
                 "restart_seconds": round(time.perf_counter() - at, 3),
                 "paid_calls": 0,
