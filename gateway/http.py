@@ -133,6 +133,19 @@ def install_error_handlers(app, settings, factory):
 
     @app.exception_handler(HTTPException)
     async def http_error(request, exc):
+        if request.url.path == "/admin/api/login":
+            # Only fixed reason codes; never log credentials, bodies or cookies.
+            reason = (
+                exc.detail
+                if exc.detail in ("invalid_origin", "invalid_login", "login_rate_limit")
+                else "login_rejected"
+            )
+            log.warning(
+                "admin_login_failed request_id=%s status=%s reason=%s",
+                request.state.request_id,
+                exc.status_code,
+                reason,
+            )
         if isinstance(exc.detail, dict) and "message" in exc.detail:
             return error(request, exc.status_code, exc.detail["message"], exc.detail.get("details"))
         return error(request, exc.status_code, str(exc.detail))

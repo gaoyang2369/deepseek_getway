@@ -31,6 +31,8 @@ const errorMessages = {
   invalid_request_parameters:
     "填写内容未通过校验，请检查当前表单的必填项、字段长度和格式。",
   invalid_login: "管理员账号或密码不正确。",
+  login_rate_limit: "登录尝试过于频繁，请等待 5 分钟后重试。",
+  admin_login_required: "登录已过期，请重新登录。",
   csrf_required: "登录状态已失效，请刷新页面后重新登录。",
   record_conflict: "已有相同记录，请检查名称或学号后重试。",
   student_identity_conflict: "该学号对应的姓名或身份与现有记录不一致。",
