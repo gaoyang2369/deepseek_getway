@@ -1,4 +1,5 @@
 "use strict";
+import { actionMenu } from "./floating.js";
 export const $ = (s) => document.querySelector(s);
 export const node = (tag, text, cls) => {
   const n = document.createElement(tag);
@@ -7,7 +8,50 @@ export const node = (tag, text, cls) => {
   return n;
 };
 export const session = { csrf: sessionStorage.getItem("lab_csrf") || "" };
-export const money = (x) => "¥" + (Number(x || 0) / 1e6).toFixed(6);
+export const number = (x) => Number(x).toLocaleString("zh-CN");
+export function money(x, precise = false) {
+  if (x === null || x === undefined) return "金额未知";
+  const value = Number(x) / 1e6;
+  return (
+    "¥" +
+    value.toLocaleString("zh-CN", {
+      minimumFractionDigits: precise ? 6 : 2,
+      maximumFractionDigits:
+        precise || (value !== 0 && Math.abs(value) < 0.0001) ? 6 : 4,
+    })
+  );
+}
+export const periodUnit = (p) => (p === "day" ? "元／日" : "元／月");
+export function stacked(primary, secondary) {
+  const d = node("div", undefined, "stacked");
+  d.append(primary instanceof Node ? primary : node("span", primary));
+  if (secondary) d.append(node("small", secondary));
+  return d;
+}
+export function disclosure(title, ...children) {
+  const d = node("details", undefined, "disclosure");
+  d.append(node("summary", title), ...children);
+  return d;
+}
+export const moreActions = actionMenu;
+export function progress(spent, limit) {
+  const d = node("div", undefined, "budget-progress");
+  const ratio = limit > 0 ? (spent / limit) * 100 : null;
+  const label =
+    ratio === null
+      ? spent > 0
+        ? "已超额 · 上限为零"
+        : "未配置额度"
+      : (ratio > 0 && ratio < 0.1 ? "<0.1" : number(Number(ratio.toFixed(1)))) +
+        "%";
+  d.append(node("span", label, spent > limit ? "error-text" : ""));
+  const bar = node("progress");
+  bar.max = 100;
+  bar.value = Math.min(100, ratio ?? (spent ? 100 : 0));
+  bar.setAttribute("aria-label", "预算使用率 " + label);
+  d.append(bar);
+  return d;
+}
 export const date = (x) =>
   x
     ? new Date(x).toLocaleString("zh-CN", {
@@ -21,6 +65,9 @@ export const operationId = () =>
     v.toString(16).padStart(2, "0"),
   ).join("");
 const errorMessages = {
+  bill_amount_mismatch:
+    "账单金额与当前入账金额不一致，或请求尚未入账，未记录核验结果。请先核查费用差异。",
+  invalid_time_range: "请选择有效的时间范围，结束时间必须晚于开始时间。",
   event_requires_reconciliation:
     "费用尚未核对，请先点击“查看请求 / 核对”完成结算；标记处理不会释放预算。",
   official_pricing_unavailable:
@@ -159,15 +206,18 @@ export function badge(value) {
   );
 }
 
-export function table(headers, rows) {
+export function table(headers, rows, cls = "") {
   const wrap = node("div", undefined, "table-wrap"),
     t = node("table"),
     head = node("thead"),
     tr = node("tr");
+  wrap.className += " " + cls;
   headers.forEach((h) => {
     const cell = node("th");
     if (h instanceof Node) cell.append(h);
-    else cell.textContent = h;
+    else cell.textContent = typeof h === "object" ? h.label : h;
+    if (h?.numeric) cell.classList.add("numeric");
+    if (h?.secondary) cell.classList.add("secondary-column");
     tr.append(cell);
   });
   head.append(tr);
@@ -175,10 +225,16 @@ export function table(headers, rows) {
   const body = node("tbody");
   for (const row of rows) {
     const line = node("tr");
-    for (const value of row) {
+    for (const [index, value] of row.entries()) {
       const cell = node("td");
       if (value instanceof Node) cell.append(value);
       else cell.textContent = value ?? "—";
+      if (headers[index]?.numeric) cell.classList.add("numeric");
+      if (headers[index]?.secondary) cell.classList.add("secondary-column");
+      cell.dataset.label =
+        typeof headers[index] === "object"
+          ? headers[index].label || ""
+          : headers[index];
       line.append(cell);
     }
     body.append(line);
@@ -190,7 +246,7 @@ export function table(headers, rows) {
 }
 
 export function actions(...buttons) {
-  const d = node("div");
+  const d = node("div", undefined, "row-actions");
   d.append(...buttons);
   return d;
 }
@@ -244,7 +300,11 @@ export function models(value) {
 }
 export function teamName(cache, id) {
   const t = cache.teamHistory.find((t) => t.id === id);
-  return t ? t.name + (t.deleted_at ? "（已删除）" : "") : short(id);
+  return t
+    ? t.name +
+        (t.deleted_at ? "（已删除）" : "") +
+        (cache.labels?.test_team_ids.includes(id) ? "（测试）" : "")
+    : short(id);
 }
 export function studentName(cache, id) {
   return (
@@ -292,6 +352,10 @@ export function listPagination(state, total, label, load) {
     state.size = Number(e.target.value);
     change(0).catch(showError);
   });
+  if (pages === 1) {
+    bar.append(node("span", `共 ${total} 条`, "pagination-summary"), select);
+    return bar;
+  }
   const buttons = node("div", undefined, "pagination-buttons");
   const previous = button("上一页", () => change(Math.max(0, offset - size)));
   previous.disabled = offset === 0;

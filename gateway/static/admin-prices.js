@@ -11,6 +11,7 @@ import {
   toolbar,
   field,
   yuan,
+  stacked,
 } from "./common.js";
 import { openForm, closeModal } from "./forms.js";
 let includePriceHistory = false;
@@ -25,7 +26,7 @@ export async function pricesView(cache, load) {
   return [
     node(
       "p",
-      "直接从 DeepSeek 官网导入模型与人民币价格，无需手动填写。导入值按官方高峰价保守估算，空闲时段实际费用可能更低；明细中保留空闲价、来源和核对日期。更新不改变历史费用。",
+      "官网导入采用高峰费率保守估算，空闲时段实际费用可能更低。来源与计价版本见“管理”，更新保留历史费用。",
       "section-note",
     ),
     source,
@@ -83,43 +84,73 @@ export async function pricesView(cache, load) {
     table(
       [
         "模型",
-        "上游模型",
-        "版本",
-        "未命中 / 命中 / 输出（元/百万）",
-        "标记",
-        "生效",
-        "结束",
-        "依据",
+        { label: "未命中输入", numeric: true },
+        { label: "缓存命中", numeric: true },
+        { label: "输出", numeric: true },
+        { label: "状态", secondary: true },
         "操作",
       ],
       rows.map((r) => [
         r.model,
-        r.upstream_model,
-        r.version,
-        [r.input_miss, r.input_hit, r.output].map(money).join(" / "),
-        r.estimated ? "估算" : "已核验",
-        date(r.starts_at),
-        date(r.ends_at),
-        r.note,
-        r.ends_at && new Date(r.ends_at) <= new Date()
-          ? badge("已结束")
-          : button(
-              "删除模型",
-              async () => {
-                if (
-                  !(await confirmAction(
-                    "删除模型“" + r.model + "”？",
-                    "该计价版本将停止供新请求使用；没有其他有效计价时，该模型将从可用列表移除。历史调用和账本保留。",
-                  ))
-                )
-                  return;
-                await api("/prices/" + r.id, "DELETE");
-                await load();
-                notice("模型已移出当前列表，历史计价和账本已保留。", "success");
-              },
-              "danger",
-            ),
+        money(r.input_miss).slice(1),
+        money(r.input_hit).slice(1),
+        money(r.output).slice(1),
+        badge(
+          r.ends_at && new Date(r.ends_at) <= new Date() ? "已结束" : "可用",
+        ),
+        button("管理", () =>
+          openForm(
+            "计价详情 · " + r.model,
+            [
+              node(
+                "p",
+                "单价单位：元／百万 Token。计价版本不等于上游账单核验记录。",
+                "section-note",
+              ),
+              stacked("计价版本", r.version),
+              stacked("上游模型", r.upstream_model),
+              stacked("生效时间", date(r.starts_at)),
+              stacked("结束时间", date(r.ends_at)),
+              stacked(
+                "费率标记",
+                r.estimated ? "保守估算费率" : "固定费率（非账单核验）",
+              ),
+              stacked("来源与依据", r.note),
+              ...(r.ends_at && new Date(r.ends_at) <= new Date()
+                ? []
+                : [
+                    button(
+                      "删除模型",
+                      async () => {
+                        if (
+                          !(await confirmAction(
+                            "删除模型“" + r.model + "”？",
+                            "该计价版本停止供新请求使用；历史调用和账本保留。",
+                          ))
+                        )
+                          return;
+                        await api("/prices/" + r.id, "DELETE");
+                        closeModal();
+                        await load();
+                        notice(
+                          "模型已移出当前列表，历史计价和账本已保留。",
+                          "success",
+                        );
+                      },
+                      "danger",
+                    ),
+                  ]),
+            ],
+            null,
+          ),
+        ),
       ]),
+      "compact-table price-table",
+    ),
+    node(
+      "p",
+      "单价单位：元／百万 Token。历史调用保留当时的计价版本。",
+      "section-note",
     ),
   ];
 }

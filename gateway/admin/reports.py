@@ -3,7 +3,7 @@ import io
 from datetime import datetime
 
 from fastapi import APIRouter, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from ..models import (
     Audit,
@@ -17,6 +17,7 @@ from ..models import (
 from ..operations import audit
 from ..schemas import EventResolve
 from ..security import fail
+from .report_queries import report_filters, totals_columns, totals_result
 
 router = APIRouter()
 
@@ -61,14 +62,18 @@ async def requests(
     request_id: str | None = None,
     status: str | None = None,
     outcome: str | None = None,
+    data_scope: str | None = None,
     offset: int = 0,
     limit: int = 200,
     paginated: bool = False,
+    include_summary: bool = False,
 ):
     if offset < 0 or not 1 <= limit <= 10000:
         fail(400, "invalid_pagination")
     async with request.app.state.db() as db:
-        q = filters(
+        if include_summary:
+            await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        q = report_filters(
             select(Call, Price.estimated, Student.name, Student.student_number)
             .join(Price, Price.id == Call.price_id)
             .join(Student, Student.id == Call.student_id),
@@ -78,10 +83,16 @@ async def requests(
             student_id,
             key_id,
             model,
+            request_id,
+            status,
+            outcome,
+            data_scope,
         )
-        for value, column in ((request_id, Call.id), (status, Call.status), (outcome, Call.outcome)):
-            if value:
-                q = q.where(column == value)
+        summary = (
+            totals_result((await db.execute(select(*totals_columns(q.subquery().c)))).one())
+            if include_summary
+            else None
+        )
         total = await db.scalar(select(func.count()).select_from(q.subquery())) if paginated else None
         rows = (
             await db.execute(q.order_by(Call.started_at.desc(), Call.id).offset(offset).limit(limit))
@@ -166,7 +177,11 @@ async def requests(
             media_type="text/csv",
             headers={"Content-Disposition": 'attachment; filename="usage.csv"'},
         )
-    return {"rows": result, "total": total} if paginated else result
+    return (
+        {"rows": result, "total": total, **({"summary": summary} if include_summary else {})}
+        if paginated
+        else result
+    )
 
 
 @router.get("/statistics")

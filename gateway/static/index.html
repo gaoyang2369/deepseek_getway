@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>实验室 · 模型网关</title>
     <link rel="stylesheet" href="/admin/style.css" />
+    <link rel="stylesheet" href="/admin/ui.css" />
   </head>
-  <body>
+  <body class="admin-ui">
     <div id="login-screen">
       <form id="login" class="login-card">
         <div class="brand">L / LABORATORY</div>
@@ -35,10 +36,10 @@
         <h2>模型网关</h2>
         <p>实验室管理控制台</p>
         <nav id="nav">
-          <button data-view="overview" class="selected">使用概览</button
+          <button data-view="overview" class="selected">管理概览</button
+          ><button data-view="consumption">消费分析</button
           ><button data-view="teams">项目组</button
-          ><button data-view="members">人员与密钥</button
-          ><button data-view="students">学生账号</button
+          ><button data-view="members">成员</button
           ><button data-view="budgets">预算账本</button
           ><button data-view="records">记录与追溯</button
           ><button data-view="prices">模型与计价</button>
@@ -51,9 +52,18 @@
       </aside>
       <main>
         <header>
+          <button
+            id="toggle-sidebar"
+            class="secondary"
+            aria-label="收起侧栏"
+            aria-expanded="true"
+            aria-controls="nav"
+          >
+            ☰
+          </button>
           <div>
             <div class="eyebrow">LAB MODEL ACCESS</div>
-            <h1 id="view-title">使用概览</h1>
+            <h1 id="view-title">管理概览</h1>
           </div>
           <button id="refresh" class="secondary">刷新数据 ↻</button>
         </header>

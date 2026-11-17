@@ -24,9 +24,8 @@ async def test_budget_short_reason_and_ime_only_save_on_explicit_click(admin, ap
     await page.locator("#login button").click()
     await page.locator("#console").wait_for(state="visible")
     await page.locator('nav button[data-view="teams"]').click()
-    await (
-        page.get_by_role("row").filter(has_text=group["name"]).get_by_role("button", name="调整预算").click()
-    )
+    await page.get_by_role("row").filter(has_text=group["name"]).get_by_role("button", name="更多", exact=True).click()
+    await page.get_by_role("menuitem", name="调整预算").click()
     form, reason = page.locator("#modal-form"), page.locator('textarea[name="reason"]')
     await page.evaluate("""() => {
       window.inputEvents = {invalid: 0, compositionstart: 0, compositionend: 0};
@@ -126,7 +125,7 @@ async def test_every_admin_module_loads_with_populated_data(admin, live_server, 
         "overview",
         "teams",
         "members",
-        "students",
+        "consumption",
         "budgets",
         "requests",
         "prices",
@@ -136,7 +135,7 @@ async def test_every_admin_module_loads_with_populated_data(admin, live_server, 
         if view in ("requests", "rejections", "events", "audit"):
             await page.locator('#nav button[data-view="records"]').click()
         await page.locator(f'nav button[data-view="{view}"]').click()
-        await page.locator("#content table").first.wait_for()
+        await page.locator("#content table:visible").first.wait_for()
         await expect(page.locator("#notice")).to_be_empty()
     assert not errors
     await page.close()

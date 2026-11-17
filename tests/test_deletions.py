@@ -5,6 +5,7 @@ import uuid
 import httpx
 import pytest
 from conftest import PASSWORD, completion, price, student, team
+from playwright.async_api import expect
 from sqlalchemy import func, select
 from support import artifact
 from test_student_portal import change, login, roster
@@ -206,32 +207,32 @@ async def test_browser_delete_buttons_and_cancellation(admin, app, live_server, 
     await page.locator("#console").wait_for(state="visible")
     await page.locator('nav button[data-view="teams"]').click()
     row = page.get_by_role("row").filter(has_text="DeleteMe")
-    await row.get_by_role("button", name="删除项目组").wait_for()
-    await row.get_by_role("button", name="删除项目组").click()
+    await row.get_by_role("button", name="更多", exact=True).click()
+    await page.get_by_role("menuitem", name="删除项目组", exact=True).wait_for()
+    await page.get_by_role("menuitem", name="删除项目组", exact=True).click()
     await page.locator("#confirm-dialog").wait_for(state="visible")
     await page.screenshot(path=str(artifact("admin-confirm-preview.png")))
     await page.locator("#confirm-cancel").click()
     assert len((await admin.get("/admin/api/teams")).json()) == 2
+    await row.get_by_role("button", name="更多", exact=True).click()
     async with page.expect_response(lambda r: r.request.method == "DELETE") as deleted:
-        await row.get_by_role("button", name="删除项目组").click()
+        await page.get_by_role("menuitem", name="删除项目组", exact=True).click()
         await page.locator("#confirm-submit").click()
     assert (await deleted.value).status == 200
     await row.wait_for(state="hidden")
     await page.get_by_role("row").filter(has_text="KeepMe").wait_for()
     await page.locator('nav button[data-view="members"]').click()
-    row = (
-        page.get_by_role("row")
-        .filter(has_text="browser002")
-        .filter(has=page.get_by_role("button", name="删除成员"))
-    )
-    await row.get_by_role("button", name="删除成员").wait_for()
-    await row.get_by_role("button", name="删除成员").click()
+    row = page.get_by_role("row").filter(has_text="browser002")
+    await row.get_by_role("button", name="管理", exact=True).click()
+    await page.locator(".member-project").get_by_role("button", name="更多", exact=True).click()
+    await page.get_by_role("menuitem", name="删除成员", exact=True).click()
     await page.locator("#confirm-submit").click()
-    await row.wait_for(state="hidden")
-    await page.locator('nav button[data-view="students"]').click()
+    await expect(page.locator("#modal")).not_to_be_visible()
+    await expect(row).to_contain_text("未分配项目")
     row = page.get_by_role("row").filter(has_text="browser001")
-    await row.get_by_role("button", name="删除学生").wait_for()
-    await row.get_by_role("button", name="删除学生").click()
+    await row.get_by_role("button", name="管理", exact=True).click()
+    await page.locator("#modal-fields > .row-actions").get_by_role("button", name="更多", exact=True).click()
+    await page.get_by_role("menuitem", name="删除学生").click()
     await page.locator("#confirm-submit").click()
     await row.wait_for(state="hidden")
     await page.get_by_role("row").filter(has_text="browser002").wait_for()

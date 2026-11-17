@@ -245,11 +245,12 @@ async def test_browser_name_student_reset_and_test_cleanup(admin, app, live_serv
     assert "网页登录已自动开通" in await page.locator("#modal-fields").inner_text()
     assert "lab_" not in await page.locator("#modal-fields").inner_text()
     await page.locator("#close-modal").click()
-    await page.locator('nav button[data-view="students"]').click()
+    await page.locator('nav button[data-view="members"]').click()
     row = page.get_by_role("row").filter(has_text="browser-new")
-    await row.get_by_role("button", name="重置密码").wait_for()
+    await row.get_by_role("button", name="管理", exact=True).click()
+    await page.locator("#modal-fields > .row-actions").get_by_role("button", name="更多", exact=True).click()
     assert await page.get_by_role("button", name="启用网页登录").count() == 0
-    await row.get_by_role("button", name="重置密码").click()
+    await page.get_by_role("menuitem", name="重置密码").click()
     await page.locator('textarea[name="reason"]').fill("测试")
     assert await page.locator("#modal-form").evaluate("(f)=>f.checkValidity()")
     await page.route(

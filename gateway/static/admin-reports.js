@@ -8,36 +8,38 @@ import {
   button,
   badge,
   table,
-  actions,
   toolbar,
   field,
   yuan,
   teamName,
   studentName,
+  number,
+  stacked,
+  disclosure,
+  progress,
+  moreActions,
 } from "./common.js";
 import { openForm, closeModal, clearTestUsageForm } from "./forms.js";
-let filters = {},
-  rejectionFilters = {};
+import {
+  reportState,
+  reportParams,
+  setReportFilters,
+  reportFilterForm,
+  summaryBar,
+  showRequestDetail,
+  returnToAnalysis,
+  settlements,
+  outcomes,
+} from "./consumption.js";
+export { overviewView } from "./consumption.js";
+let rejectionFilters = {};
+let requestRevision = 0;
 let requestOffset = 0,
   rejectionOffset = 0,
   eventOffset = 0,
   auditOffset = 0;
 let eventResolved = "false";
 const pageSizes = { requests: 10, rejections: 10, events: 10, audit: 10 };
-const outcomes = {
-  in_progress: "执行中",
-  success: "成功",
-  upstream_failure: "上游失败",
-  client_disconnected: "客户端断开",
-  not_sent: "未发送",
-  unknown: "结果未知",
-};
-const settlements = {
-  reserved: "进行中",
-  running: "进行中",
-  pending: "待核对",
-  settled: "已结算",
-};
 const eventNames = {
   new_source: "新来源提示",
   budget_80: "预算达到 80%",
@@ -91,6 +93,11 @@ function pagination(kind, offset, total, change) {
     pageSizes[kind] = Number(e.target.value);
     change(0).catch(showError);
   });
+  if (pages === 1) {
+    summary.textContent = `共 ${total} 条`;
+    bar.append(summary, select);
+    return bar;
+  }
   const buttons = node("div", undefined, "pagination-buttons");
   const previous = button("上一页", () => change(Math.max(0, offset - size)));
   previous.disabled = offset === 0;
@@ -133,11 +140,11 @@ async function recordRows(path, params, kind, offset, setOffset) {
 }
 function reconcileForm(r, load) {
   openForm(
-    "核对费用并结算",
+    "核对费用并入账",
     [
       node(
         "p",
-        "核对只调整费用结算，不修改调用结果。完成后会自动处理关联的费用待核对告警。",
+        "核对只调整费用入账，不修改调用结果。完成后会自动处理关联的费用待核对告警。",
         "section-note",
       ),
       field("核实费用 / 元", "cost", "number"),
@@ -153,87 +160,54 @@ function reconcileForm(r, load) {
     },
   );
 }
-export async function overviewView(cache, load) {
-  const [stats, metrics, rejected] = await Promise.all([
-    api("/statistics"),
-    api("/metrics"),
-    api("/rejections?limit=1"),
-  ]);
-  const cards = node("div", undefined, "cards overview-cards");
-  for (const [label, value] of [
-    ["已准入调用", stats.reduce((a, r) => a + r.calls, 0)],
-    ["被拒绝请求", rejected.total],
-    ["已结算费用", money(stats.reduce((a, r) => a + r.cost, 0))],
-    ["待核对请求", metrics.pending_requests],
-    ["当前进行中", metrics.current_concurrency],
-  ]) {
-    const card = node("div", undefined, "card");
-    card.append(
-      node("div", label, "label"),
-      node("div", String(value), "number"),
-    );
-    cards.append(card);
-  }
-  return [
-    node(
-      "p",
-      "调用结果与费用结算分别统计；待核对不等于失败。拒绝记录从本次升级开始累计，历史调用结果未知。",
-      "section-note",
-    ),
-    ...(metrics.rejection_record_failures
-      ? [
-          node(
-            "p",
-            `本次运行有 ${metrics.rejection_record_failures} 次拒绝记录写入失败，拒绝统计可能不完整。`,
-            "section-note",
-          ),
-        ]
-      : []),
-    cards,
-    toolbar("用量明细"),
-    table(
-      [
-        "项目组",
-        "人员",
-        "Key",
-        "模型",
-        "准入 / 成功 / 失败",
-        "执行中 / 未知",
-        "断开 / 未发送",
-        "待核对",
-        "输入 / 输出",
-        "缓存命中",
-        "费用",
-      ],
-      stats.map((r) => [
-        teamName(cache, r.team_id),
-        studentName(cache, r.student_id),
-        short(r.key_id),
-        r.model,
-        r.calls + " / " + r.success + " / " + r.failures,
-        r.in_progress + " / " + r.unknown,
-        r.client_disconnected + " / " + r.not_sent,
-        r.pending,
-        r.input_tokens + " / " + r.output_tokens,
-        r.cache_hit_tokens,
-        money(r.cost),
-      ]),
-    ),
-  ];
-}
+let budgetKind = "team",
+  budgetHistory = false;
 export async function budgetsView(cache, load) {
-  const rows = await api("/budgets");
-  const cleanupTeams = [...new Set(rows.map((p) => p.team_id).filter(Boolean))]
-    .map((id) => cache.teamHistory.find((t) => t.id === id))
-    .filter(Boolean);
+  const rows = await api(
+    budgetHistory ? "/budgets" : "/budget-status?owner_type=" + budgetKind,
+  );
+  const cleanupTeams = cache.teams;
+  const tabs = node("div", undefined, "segment-tabs");
+  for (const [value, label] of [
+    ["team", "项目预算"],
+    ["membership", "个人额度"],
+  ]) {
+    const b = button(label, () => {
+      budgetKind = value;
+      return load();
+    });
+    b.setAttribute("aria-pressed", String(budgetKind === value));
+    tabs.append(b);
+  }
+  tabs.append(
+    button(budgetHistory ? "仅看当前周期" : "查看历史周期", () => {
+      budgetHistory = !budgetHistory;
+      return load();
+    }),
+  );
+  const now = new Date();
+  const visible = rows.filter(
+    (p) =>
+      p.owner_type === budgetKind &&
+      (budgetHistory ||
+        (new Date(p.starts_at) <= now && new Date(p.ends_at) > now)),
+  );
+  const periodKey = (p) => p.starts_at + "/" + p.ends_at;
+  const counts = new Map();
+  visible.forEach((p) =>
+    counts.set(periodKey(p), (counts.get(periodKey(p)) || 0) + 1),
+  );
+  const commonPeriod = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const typical = visible.find((p) => periodKey(p) === commonPeriod);
   return [
     node(
       "p",
-      "这里同时展示项目组与个人的周期预算，同一笔调用的两个归属请勿相加。剩余额度 = 预算上限 − 已结算。每次请求前检查已用费用，不预留预算；进行中请求结算后可能超出上限，随后停止新请求。",
+      "项目预算与个人额度是同一笔消费的两个约束，不可相加。剩余额度 = 上限 − 已入账费用。",
       "section-note",
     ),
+    tabs,
     toolbar(
-      "周期预算与用量",
+      budgetKind === "team" ? "项目预算" : "个人额度",
       ...(cache.config.test_cleanup_enabled && cleanupTeams.length
         ? [
             button(
@@ -244,161 +218,133 @@ export async function budgetsView(cache, load) {
           ]
         : []),
     ),
-    ...(cache.config.test_cleanup_enabled
+    ...(typical
       ? [
           node(
             "p",
-            "模拟环境支持按项目组删除测试调用、用量和账本，同时清零该组模拟用量。项目组、学生、Key 和预算配置保留。",
-            "section-note",
+            "预算周期：" +
+              date(typical.starts_at) +
+              " — " +
+              date(typical.ends_at) +
+              "（不含）· 北京时间；其他周期在行内标注。",
+            "section-note budget-period",
           ),
         ]
       : []),
     table(
       [
-        "归属",
-        "对象",
-        "开始 / 北京时间",
-        "结束",
-        "预算上限",
-        "已结算",
-        "剩余额度",
-        ...(cache.config.test_cleanup_enabled ? ["操作"] : []),
+        "对象 / 周期",
+        { label: "已用 / 上限", numeric: true },
+        "使用率",
+        { label: "剩余额度", numeric: true },
+        "状态",
       ],
-      rows.map((p) => [
-        p.owner_type === "team" ? "项目组" : "个人",
-        p.owner_type === "team"
-          ? teamName(cache, p.owner_id)
-          : cache.memberHistory.find((m) => m.id === p.owner_id)?.name ||
-            short(p.owner_id),
-        date(p.starts_at),
-        date(p.ends_at),
-        money(p.limit),
-        money(p.spent),
+      visible.map((p) => [
+        stacked(
+          p.name ||
+            (p.owner_type === "team"
+              ? teamName(cache, p.owner_id)
+              : (cache.memberHistory.find((m) => m.id === p.owner_id)?.name ||
+                  short(p.owner_id)) +
+                " / " +
+                teamName(cache, p.team_id)),
+          periodKey(p) === commonPeriod
+            ? ""
+            : "特殊周期：" +
+                date(p.starts_at) +
+                " — " +
+                date(p.ends_at) +
+                "（不含）",
+        ),
+        stacked(money(p.spent), "上限 " + money(p.limit)),
+        progress(p.spent, p.limit),
         money(p.available),
-        ...(cache.config.test_cleanup_enabled
-          ? [
-              button(
-                "删除该组测试记录",
-                () => clearTestUsageForm(cleanupTeams, load, p.team_id),
-                "danger",
-              ),
-            ]
-          : []),
+        badge(
+          p.available < 0
+            ? "已超额"
+            : p.available === 0
+              ? "已达上限"
+              : p.spent >= p.limit * 0.8
+                ? "接近上限"
+                : "额度充足",
+        ),
       ]),
+      "compact-table budget-table",
+    ),
+    disclosure(
+      "预算规则",
+      node(
+        "p",
+        "每次请求前检查已入账费用，不预留预算。进行中请求可能在入账后造成超额，随后停止新请求；待核对金额未知。当前周期包含尚未使用的额度；历史视图仅显示已有账本周期（最多 2000 条）。",
+        "section-note",
+      ),
     ),
   ];
 }
 export async function requestsView(cache, load) {
-  const form = node("form", undefined, "filters");
-  form.append(
-    field(
-      "起始时间 / 北京时间",
-      "start",
-      "datetime-local",
-      filters.start || "",
-    ),
-    field("结束时间 / 不含", "end", "datetime-local", filters.end || ""),
-    field("项目组", "team_id", "text", filters.team_id || "", [
-      ["", "全部"],
-      ...cache.teamHistory.map((t) => [t.id, teamName(cache, t.id)]),
-    ]),
-    field("人员", "student_id", "text", filters.student_id || "", [
-      ["", "全部"],
-      ...cache.memberHistory.map((m) => [
-        m.student_id,
-        m.name + " / " + m.team + (m.deleted_at ? "（已删除）" : ""),
-      ]),
-    ]),
-    field("Key ID（可留空）", "key_id", "text", filters.key_id || ""),
-    field("模型（可留空）", "model", "text", filters.model || ""),
-    field("请求 ID", "request_id", "text", filters.request_id || ""),
-    field("结算状态", "status", "text", filters.status || "", [
-      ["", "全部"],
-      ...Object.entries(settlements),
-    ]),
-    field("调用结果", "outcome", "text", filters.outcome || "", [
-      ["", "全部"],
-      ...Object.entries(outcomes),
-    ]),
-  );
-  form.querySelectorAll("input,select").forEach((i) => (i.required = false));
-  const submit = node("button", "筛选");
-  form.append(submit);
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    filters = Object.fromEntries(new FormData(form));
+  if (requestRevision !== (reportState.revision || 0)) {
     requestOffset = 0;
-    load().catch((e) => showError(e));
+    requestRevision = reportState.revision || 0;
+  }
+  const form = reportFilterForm(cache, load, () => {
+    requestOffset = 0;
   });
-  const params = new URLSearchParams(
-    Object.entries(filters).filter(([, v]) => v),
-  );
-  const { rows, total } = await recordRows(
+  const params = reportParams({ include_summary: true });
+  const { rows, total, summary } = await recordRows(
     "/requests",
     params,
     "requests",
     requestOffset,
-    (n) => (requestOffset = n),
+    (n) => {
+      requestOffset = n;
+    },
   );
   const a = node("a", "导出当前筛选 CSV（最多 10000 行，从首条开始）");
-  const exportParams = new URLSearchParams(params);
-  exportParams.set("offset", "0");
-  exportParams.set("limit", "10000");
+  const exportParams = reportParams({ offset: 0, limit: 10000 });
   a.href = "/admin/api/export.csv?" + exportParams;
   const controls = () =>
     pagination("requests", requestOffset, total, async (n) => {
       requestOffset = n;
       await load();
-      document.querySelector("#record-tabs").scrollIntoView({ block: "start" });
     });
   return [
     form,
-    toolbar("调用明细"),
-    node(
-      "p",
-      "此处显示已准入调用；预算、权限和限流等拦截请查看“拒绝记录”。费用待核对与调用结果相互独立。",
-      "section-note",
+    summaryBar(summary),
+    toolbar(
+      "单次调用",
+      button("返回消费汇总", () => returnToAnalysis(cache)),
     ),
     controls(),
     a,
     table(
       [
-        "时间",
-        "人员 / 组",
-        "模型",
+        "成员 / 项目",
+        { label: "入账费用", numeric: true },
+        "模型 / 时间",
         "调用结果",
-        "结算状态",
-        "费用",
-        "输入 / 输出",
+        "入账状态",
         "操作",
       ],
       rows.map((r) => [
-        date(r.started_at),
-        r.name + " / " + teamName(cache, r.team_id),
-        r.model,
-        outcomes[r.outcome] || r.outcome,
-        badge(settlements[r.status] || r.status),
+        stacked(r.name, teamName(cache, r.team_id)),
         r.cost === null
-          ? "待核对"
-          : money(r.cost) + (r.estimated ? " 估算" : ""),
-        (r.usage?.prompt_tokens ?? "—") +
-          " / " +
-          (r.usage?.completion_tokens ?? "—"),
-        actions(
-          button("详情", () => {
-            openForm(
-              "请求详情",
-              [node("pre", JSON.stringify(r, null, 2), "detail")],
-              null,
-            );
-          }),
-          ...(r.status === "pending"
-            ? [button("人工核对", () => reconcileForm(r, load))]
-            : []),
+          ? stacked("金额未知", r.status === "pending" ? "待核对" : "尚未入账")
+          : money(r.cost, true),
+        stacked(r.model, date(r.started_at)),
+        badge(outcomes[r.outcome] || "结果未知"),
+        badge(settlements[r.status] || r.status),
+        button("详情", () =>
+          showRequestDetail(r.id, cache, (item) => reconcileForm(item, load)),
         ),
       ]),
+      "compact-table request-table",
     ),
     controls(),
+    node(
+      "p",
+      "已入账不代表已核对上游账单。预算、权限和限流等拦截见“拒绝记录”；费用待核对与调用结果相互独立。",
+      "section-note",
+    ),
   ];
 }
 export async function rejectionsView(cache, load) {
@@ -468,33 +414,43 @@ export async function rejectionsView(cache, load) {
     controls(),
     table(
       [
-        "时间",
-        "人员 / 项目组",
-        "模型",
-        "原因",
-        "限制归属",
-        "HTTP",
-        "请求 ID",
-        "详情",
+        "成员 / 项目",
+        "拒绝原因",
+        { label: "模型", secondary: true },
+        { label: "HTTP", numeric: true },
+        { label: "时间", secondary: true },
+        "操作",
       ],
       rows.map((r) => [
-        date(r.created_at),
-        studentName(cache, r.student_id) + " / " + teamName(cache, r.team_id),
+        stacked(studentName(cache, r.student_id), teamName(cache, r.team_id)),
+        stacked(
+          rejectionNames[r.reason] || r.reason,
+          {
+            team: "项目组限制",
+            membership: "个人限制",
+            both: "项目组及个人限制",
+          }[r.limit_scope],
+        ),
         r.model,
-        rejectionNames[r.reason] || r.reason,
-        { team: "项目组", membership: "个人", both: "项目组及个人" }[
-          r.limit_scope
-        ] || "—",
         r.http_status,
-        r.id,
+        date(r.created_at),
         button("详情", () =>
           openForm(
             "拒绝详情",
-            [node("pre", JSON.stringify(r, null, 2), "detail")],
+            [
+              stacked("拒绝原因", rejectionNames[r.reason] || r.reason),
+              stacked("时间", date(r.created_at)),
+              stacked("请求 ID", r.id),
+              disclosure(
+                "技术字段",
+                node("pre", JSON.stringify(r, null, 2), "detail"),
+              ),
+            ],
             null,
           ),
         ),
       ]),
+      "compact-table rejection-table",
     ),
     controls(),
   ];
@@ -520,9 +476,11 @@ export async function eventsView(cache, load) {
     load().catch(showError);
   });
   const openRequests = (r) => {
-    filters = r.detail.request_id
-      ? { request_id: r.detail.request_id }
-      : { status: "pending" };
+    setReportFilters(
+      r.detail.request_id
+        ? { request_id: r.detail.request_id }
+        : { status: "pending" },
+    );
     requestOffset = 0;
     return cache.navigate("requests");
   };
@@ -542,26 +500,51 @@ export async function eventsView(cache, load) {
     controls(),
     table(
       [
-        "首次 / 最近发生",
-        "级别 / 事件",
-        "次数",
+        "事件",
         "项目组",
-        "详情",
-        "处理记录",
+        { label: "最近发生", secondary: true },
+        "处理状态",
         "操作",
       ],
       rows.map((r) => [
-        date(r.created_at) + " / " + date(r.last_seen_at),
-        { info: "提示", warning: "预警", action: "待办" }[r.severity] +
-          " / " +
-          (eventNames[r.kind] || r.kind),
-        r.occurrences,
+        stacked(
+          eventNames[r.kind] || r.kind,
+          ({ info: "提示", warning: "预警", action: "待办" }[r.severity] ||
+            "提示") +
+            " · " +
+            number(r.occurrences) +
+            " 次",
+        ),
         teamName(cache, r.team_id),
-        JSON.stringify(r.detail),
-        r.resolved
-          ? `已处理 · ${r.resolved_by || "历史记录"} · ${date(r.resolved_at)} · ${r.resolution || "—"}`
-          : "待处理",
-        actions(
+        date(r.last_seen_at),
+        stacked(
+          r.resolved ? "已处理" : "待处理",
+          r.resolved ? r.resolution : "",
+        ),
+        moreActions(
+          button("详情", () =>
+            openForm(
+              "事件详情",
+              [
+                stacked(
+                  eventNames[r.kind] || r.kind,
+                  teamName(cache, r.team_id),
+                ),
+                stacked(
+                  "首次 / 最近发生",
+                  date(r.created_at) + " / " + date(r.last_seen_at),
+                ),
+                stacked(
+                  "处理记录",
+                  r.resolved
+                    ? `${r.resolved_by || "历史记录"} · ${date(r.resolved_at)} · ${r.resolution || "—"}`
+                    : "待处理",
+                ),
+                node("pre", JSON.stringify(r.detail, null, 2), "detail"),
+              ],
+              null,
+            ),
+          ),
           ...(r.detail.request_id || r.kind === "recovery_pending"
             ? [button("查看请求 / 核对", () => openRequests(r))]
             : []),
@@ -593,6 +576,7 @@ export async function eventsView(cache, load) {
             : []),
         ),
       ]),
+      "compact-table event-table",
     ),
     controls(),
   ];
@@ -619,15 +603,26 @@ export async function auditView(cache, load) {
     ),
     controls(),
     table(
-      ["时间", "操作者", "操作", "对象", "非敏感差异", "请求 ID"],
+      [
+        "时间",
+        "操作者",
+        "操作",
+        { label: "对象", secondary: true },
+        "非敏感差异",
+        { label: "请求 ID", secondary: true },
+      ],
       rows.map((r) => [
         date(r.created_at),
         r.actor,
         r.action,
         short(r.target),
-        JSON.stringify(r.detail),
+        disclosure(
+          "查看详情",
+          node("pre", JSON.stringify(r.detail, null, 2), "detail"),
+        ),
         short(r.request_id),
       ]),
+      "compact-table audit-table",
     ),
     controls(),
   ];

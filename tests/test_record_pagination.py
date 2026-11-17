@@ -78,12 +78,12 @@ async def test_browser_all_record_tabs_page_size_and_navigation(admin, app, live
     async with app.state.db() as db, db.begin():
         await db.execute(delete(Event).where(Event.dedup.like("pagination-%")))
     await page.locator("#refresh").click()
-    await expect(page.get_by_role("group", name="日志分页").first).to_contain_text("共 1 条 · 第 1 / 1 页")
+    await expect(page.get_by_role("group", name="日志分页").first).to_contain_text("共 1 条")
     await expect(page.locator("#content tbody tr")).to_have_count(1)
     await page.locator('#content [name="resolved"]').select_option("true")
     await expect(page.locator("#content tbody tr")).to_have_count(0)
-    await expect(page.get_by_role("group", name="日志分页").first).to_contain_text("共 0 条 · 第 1 / 1 页")
+    await expect(page.get_by_role("group", name="日志分页").first).to_contain_text("共 0 条")
     await expect(
         page.get_by_role("group", name="日志分页").last.get_by_role("button", name="下一页")
-    ).to_be_disabled()
+    ).to_have_count(0)
     await page.close()

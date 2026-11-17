@@ -12,14 +12,16 @@ import {
   button,
   table,
 } from "./common.js";
+import { closeFloatingPanels } from "./floating.js";
 let submitAction = null,
   modalComposing = false;
 export function openForm(title, fields, action) {
+  closeFloatingPanels();
   modalComposing = false;
   $("#modal-title").textContent = title;
   $("#modal-error").hidden = true;
   $("#modal-error").textContent = "";
-  $("#modal").classList.remove("danger-modal");
+  $("#modal").classList.remove("danger-modal", "wide-modal");
   $("#modal-submit").textContent = "保存";
   $("#modal-fields").replaceChildren(...fields);
   $("#modal-submit").hidden = !action;
@@ -29,6 +31,7 @@ export function openForm(title, fields, action) {
 }
 
 export function closeModal() {
+  closeFloatingPanels();
   modalComposing = false;
   $("#modal").close();
   $("#modal-fields").replaceChildren();

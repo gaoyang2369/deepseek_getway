@@ -141,10 +141,9 @@ async def test_batch_members_ui_preview_validation_and_group_entry(admin, live_s
 
     # Group entry selects the right group. Existing members are skipped and conflicts are actionable.
     await page.locator('nav button[data-view="teams"]').click()
+    await page.get_by_role("row").filter(has_text=group["name"]).get_by_role("button", name="更多", exact=True).click()
     await (
-        page.get_by_role("row")
-        .filter(has_text=group["name"])
-        .get_by_role("button", name="批量添加成员")
+        page.get_by_role("menuitem", name="批量添加成员")
         .click()
     )
     await expect(page.locator('select[name="team_id"]')).to_have_value(group["id"])
@@ -161,7 +160,7 @@ async def test_batch_members_ui_preview_validation_and_group_entry(admin, live_s
     await page.locator("#close-modal").click()
 
     # The existing simplified student-account import remains available.
-    await page.locator('nav button[data-view="students"]').click()
+    await page.locator('nav button[data-view="members"]').click()
     await page.get_by_role("button", name="＋ 批量导入学号").click()
     await roster.fill("004")
     await page.locator("#modal-submit").click()

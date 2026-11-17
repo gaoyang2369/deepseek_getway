@@ -109,7 +109,7 @@ async def test_edit_duplicate_number_and_concurrent_claim(admin):
         assert response.status_code == 200 and response.json()["must_change_password"]
 
 
-async def test_edit_from_both_admin_pages(admin, live_server, browser):
+async def test_edit_name_and_account_from_unified_member_detail(admin, live_server, browser):
     person, _ = await student(admin, await team(admin), "edit-ui")
     page = await browser.new_page(viewport={"width": 1400, "height": 1000})
     await page.goto(live_server + "/admin")
@@ -117,15 +117,17 @@ async def test_edit_from_both_admin_pages(admin, live_server, browser):
     await page.locator("#login button").click()
     await page.locator('nav button[data-view="members"]').click()
     row = page.get_by_role("row").filter(has_text="edit-ui")
-    await row.get_by_role("button", name="编辑信息", exact=True).click()
+    await row.get_by_role("button", name="管理", exact=True).click()
+    await page.locator("#modal").get_by_role("button", name="编辑信息", exact=True).click()
     await expect(page.locator('#modal-fields input[name="name"]')).to_have_value("同学edit-ui")
     await page.locator('#modal-fields input[name="name"]').fill("更正后的姓名")
     await page.screenshot(path=str(artifact("admin-student-edit.png")))
     await page.locator("#modal-submit").click()
     await expect(page.locator("#modal")).not_to_be_visible()
     await expect(row).to_contain_text("更正后的姓名")
-    await page.locator('nav button[data-view="students"]').click()
-    await row.get_by_role("button", name="编辑信息", exact=True).click()
+    await page.locator('nav button[data-view="members"]').click()
+    await row.get_by_role("button", name="管理", exact=True).click()
+    await page.locator("#modal").get_by_role("button", name="编辑信息", exact=True).click()
     await expect(page.locator('#modal-fields input[name="name"]')).to_have_value("更正后的姓名")
     await page.locator('#modal-fields input[name="student_number"]').fill("000987")
     await page.locator("#modal-submit").click()

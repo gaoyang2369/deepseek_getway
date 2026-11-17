@@ -1,3 +1,4 @@
+import { closeFloatingPanels } from "./floating.js";
 import { $, node, session, api, showError, notice } from "./common.js";
 import { teamsView, membersView } from "./people.js";
 import {
@@ -8,15 +9,17 @@ import {
   eventsView,
   auditView,
 } from "./reports.js";
+import { consumptionView, clearRequestOrigin } from "./consumption.js";
 import { pricesView } from "./prices.js";
 import { studentAdminView } from "./students.js";
 let view = "overview",
   loadVersion = 0;
 const names = {
   students: "学生账号",
-  overview: "使用概览",
+  overview: "管理概览",
+  consumption: "消费分析",
   teams: "项目组",
-  members: "人员与密钥",
+  members: "成员",
   budgets: "预算账本",
   requests: "请求记录",
   prices: "模型与计价",
@@ -26,6 +29,7 @@ const names = {
 };
 const views = {
   overview: overviewView,
+  consumption: consumptionView,
   teams: teamsView,
   members: membersView,
   budgets: budgetsView,
@@ -37,6 +41,7 @@ const views = {
   students: studentAdminView,
 };
 async function load() {
+  closeFloatingPanels();
   const loading = ++loadVersion,
     currentView = view;
   notice("");
@@ -56,17 +61,28 @@ async function load() {
   const c = $("#content");
   c.replaceChildren(node("p", "加载中…", "muted"));
   const cache = {
+    view: currentView,
     navigate: async (next) => {
       view = next;
       await load();
     },
   };
-  [cache.teamHistory, cache.memberHistory, cache.config] = await Promise.all([
+  [
+    cache.teamHistory,
+    cache.memberHistory,
+    cache.config,
+    cache.labels,
+    cache.reportOptions,
+  ] = await Promise.all([
     api("/teams?include_deleted=true"),
     ["members", "students"].includes(currentView)
       ? Promise.resolve([])
       : api("/memberships?include_deleted=true"),
     api("/config"),
+    api("/report-labels"),
+    ["overview", "consumption", "requests"].includes(currentView)
+      ? api("/consumption-options")
+      : Promise.resolve({ models: [] }),
   ]);
   cache.teams = cache.teamHistory.filter((t) => !t.deleted_at);
   cache.members = cache.memberHistory.filter((m) => !m.deleted_at);
@@ -97,11 +113,20 @@ $("#login").addEventListener("submit", async (e) => {
 });
 function navigate(e) {
   if (e.target.dataset.view) {
+    clearRequestOrigin();
     view =
       e.target.dataset.view === "records" ? "requests" : e.target.dataset.view;
     load().catch((e) => showError(e));
   }
 }
+const sidebarToggle = $("#toggle-sidebar");
+function toggleSidebar() {
+  const collapsed = document.body.classList.toggle("sidebar-collapsed");
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  sidebarToggle.setAttribute("aria-label", collapsed ? "展开侧栏" : "收起侧栏");
+}
+sidebarToggle.addEventListener("click", toggleSidebar);
+if (window.innerWidth < 760) toggleSidebar();
 $("#nav").addEventListener("click", navigate);
 $("#record-tabs").addEventListener("click", navigate);
 $("#refresh").addEventListener("click", () =>

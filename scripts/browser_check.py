@@ -30,10 +30,10 @@ async def main(base_url):
         await page.locator('input[name="password"]').fill(admin_password())
         await page.locator("#login button").click()
         await page.locator("#console").wait_for(state="visible")
-        await page.get_by_text("已准入调用", exact=True).wait_for()
+        await page.get_by_text("筛选范围 · 已入账费用", exact=True).wait_for()
         await page.screenshot(path=str(artifact("admin-preview.png")), full_page=True)
         visited = []
-        for name in ("teams", "members", "budgets", "requests", "prices", "events", "audit", "overview"):
+        for name in ("teams", "members", "consumption", "budgets", "requests", "prices", "events", "audit", "overview"):
             if name in ("requests", "rejections", "events", "audit"):
                 await page.locator('#nav button[data-view="records"]').click()
             await page.locator(f'nav button[data-view="{name}"]').click()
@@ -42,10 +42,9 @@ async def main(base_url):
             visited.append(name)
         # Test a real low-risk form update on the MOCK project, then close it.
         await page.locator('nav button[data-view="teams"]').click()
+        await page.get_by_role("row").filter(has_text=identity["team_name"]).get_by_role("button", name="更多", exact=True).click()
         await (
-            page.get_by_role("row")
-            .filter(has_text=identity["team_name"])
-            .get_by_role("button", name="调整预算")
+            page.get_by_role("menuitem", name="调整预算")
             .click()
         )
         await page.locator('#modal input[name="amount"]').fill("100")

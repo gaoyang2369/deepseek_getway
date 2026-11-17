@@ -123,6 +123,7 @@ async def memberships(
     request: Request,
     include_deleted: bool = False,
     team_id: str | None = None,
+    student_id: str | None = None,
     paginated: bool = False,
     limit: int = Query(10, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -140,6 +141,8 @@ async def memberships(
             )
         if team_id:
             query = query.where(Membership.team_id == team_id)
+        if student_id:
+            query = query.where(Membership.student_id == student_id)
         if paginated:
             total = await db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
             query = query.offset(offset).limit(limit)

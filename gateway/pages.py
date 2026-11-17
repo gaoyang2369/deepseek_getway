@@ -14,10 +14,11 @@ ASSETS = {
     "/admin/": ("index.html", "admin_page"),
     "/admin/app.js": ("app.js", "admin_script"),
     "/admin/students.js": ("admin-students.js", "admin_students_script"),
+    "/admin/ui.css": ("admin-ui.css", None),
     "/admin/style.css": ("style.css", "admin_css"),
     **{
         f"/admin/{name}.js": (f"admin-{name}.js", None)
-        for name in ("common", "forms", "people", "reports", "prices")
+        for name in ("common", "forms", "people", "reports", "prices", "consumption", "floating", "select")
     },
 }
 
