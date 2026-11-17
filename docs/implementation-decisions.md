@@ -8,7 +8,7 @@
 | --- | --- |
 | `gateway/main.py`、`http.py`、`pages.py` | 生命周期与健康检查、请求防护/错误响应、页面资产白名单 |
 | `gateway/chat.py`、`streaming.py` | 模型/聊天协议、上游请求、流式输出、断连与最终结算 |
-| `gateway/admission.py`、`migrations/sql/0005_admit.sql` | 组内调度、尝试限流、持锁批量准入 |
+| `gateway/admission.py`、`migrations/sql/0006_admit.sql` | 组内调度、尝试限流、持锁批量准入 |
 | `gateway/billing.py` | 周期、费用、账本结算、事件与启动恢复 |
 | `gateway/accounts.py`、`keys.py`、`operations.py` | 账户/成员操作、Key 签发鉴权、幂等和审计 |
 | `gateway/admin/`、`student.py` | 管理与学生 HTTP 路由；共享业务不反向依赖路由 |
@@ -60,3 +60,8 @@ PostgreSQL 是身份、权限和资金的权威来源。组锁使用 `FOR NO KEY
 管理端浮层集中在 `admin-floating.js`，使用浏览器 Popover 顶层避免表格 overflow 裁剪；挂在所属 dialog（否则 body），保持模态焦点范围。每个作用域最多一个浮层，并在滚动、尺寸变化和触发器移除时重新定位或关闭。`admin-select.js` 复用相同机制。管理端目标浏览器需支持 Popover、ResizeObserver 和容器查询；旧浏览器不使用额外 z-index 降级。
 
 消费下钻只保存当前标签页内的筛选、维度、分页和滚动快照；刷新浏览器后恢复默认本月，不持久化管理员查询上下文。模型候选读取历史价格与调用模型并集；项目本月消费通过一次聚合读取，沿用已入账 Call 的开始时间口径。这些查询均受现有管理员鉴权保护，不改变准入、计费或账本。
+
+
+个人和组的 RPM/并发均允许 0，表示不启用该层限制。容量排队只对并发触顶生效，最多等待 10 秒、全实例 32 个等待者；排队重试不重复增加 Redis 尝试数，每轮 SQL 重查预算、身份、权限和配置，断连/取消清理等待名额。频率触顶直接返回带 Retry-After 的 429。
+
+`gateway/files.py` 将官方文件 ID 映射为成员专属的网关 ID；引用前批量校验成员、过期状态和上传凭证版本，再转为官方 ID。上传不创建模型费用记录，模型调用仍使用既有 usage 结算。图片仅在请求及临时文件中传输，数据库保存文件元数据。上传和本地保存无法构成跨服务事务；已知上游 ID 的本地保存失败会尝试删除，异常日志只记录请求 ID。

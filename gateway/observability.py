@@ -48,6 +48,7 @@ async def record_rejection(request, settings, factory, status):
                     reason=reason,
                     http_status=status,
                     limit_scope=getattr(state, "limit_scope", None),
+                    details=getattr(state, "rejection_details", None),
                     ip=client_ip(request, settings),
                     created_at=now(),
                 )

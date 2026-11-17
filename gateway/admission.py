@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
+from fastapi import HTTPException
 from sqlalchemy import text
 
 from .keys import authenticate
@@ -77,6 +78,7 @@ class AdmissionBatcher:
         self.turns = {}
         self.cleanups = set()
         self.pending = 0
+        self.capacity_waiters = 0
         self.closing = False
         self.routes = OrderedDict()
         self.stats = {"batches": 0, "requests": 0, "max_batch_size": 0, "cleanup_failures": 0}
@@ -209,7 +211,7 @@ return {a, b}
 """
 
 
-async def admit(app, authorization, body, request_id, ip, started, request_state=None):
+async def admit(app, authorization, body, request_id, ip, started, request_state=None, request=None):
     factory, settings = app.state.db, app.state.settings
     if not authorization or not authorization.startswith("Bearer ") or len(authorization) > 256:
         fail(401, "invalid_api_key")
@@ -226,26 +228,57 @@ async def admit(app, authorization, body, request_id, ip, started, request_state
     rates = await app.state.redis.eval(
         RATE_LUA, 2, f"rate:{{{team_id}}}:team", f"rate:{{{team_id}}}:{member_id}"
     )
-    result = await app.state.admission.submit(
-        team_id,
-        {
-            "key_digest": key_digest,
-            "team_attempts": rates[0],
-            "member_attempts": rates[1],
-            "model": body["model"],
-            "output": body.get("max_tokens"),
-            # Legacy SQL argument; admission no longer estimates or reserves money.
-            "input_bound": 0,
-            "request_id": request_id,
-            "ip": ip,
-        },
-    )
+    params = {
+        "key_digest": key_digest,
+        "team_attempts": rates[0],
+        "member_attempts": rates[1],
+        "model": body["model"],
+        "output": body.get("max_tokens"),
+        # Legacy SQL argument; admission no longer estimates or reserves money.
+        "input_bound": 0,
+        "request_id": request_id,
+        "ip": ip,
+    }
+    queued = False
+    wait_started = time.monotonic()
+    deadline = wait_started + settings.capacity_wait_seconds
+    try:
+        while True:
+            if request is not None and await request.is_disconnected():
+                fail(499, "client_disconnected")
+            result = await app.state.admission.submit(team_id, params)
+            if result.get("error") != "concurrency_limit":
+                break
+            details = result.setdefault("details", {})
+            details["waited_ms"] = round((time.monotonic() - wait_started) * 1000)
+            if time.monotonic() >= deadline:
+                details["queue_timeout"] = True
+                break
+            if not queued:
+                if app.state.admission.capacity_waiters >= settings.capacity_queue_size:
+                    details["queue_full"] = True
+                    break
+                app.state.admission.capacity_waiters += 1
+                queued = True
+            # No DB connection/lock is retained. SQL rechecks budget, identity,
+            # limits and credentials before each attempt, including final dispatch.
+            await asyncio.sleep(min(0.1, max(0, deadline - time.monotonic())))
+    finally:
+        if queued:
+            app.state.admission.capacity_waiters -= 1
     if "error" in result:
         if request_state is not None:
             request_state.limit_scope = result.get("limit_scope")
+            request_state.rejection_details = result.get("details")
         if result["status"] in (401, 403):
             app.state.admission.routes.pop(key_digest, None)
-        fail(result["status"], result["error"])
+        raise HTTPException(
+            result["status"],
+            detail={
+                "message": result["error"],
+                "details": result.get("details"),
+            },
+        )
     # The transaction has committed before this timer or any upstream dispatch.
     values = result["call"]
     if request_state is not None:

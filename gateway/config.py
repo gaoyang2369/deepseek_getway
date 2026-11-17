@@ -35,6 +35,9 @@ class Settings:
     session_seconds: int = 3600
     max_body: int = 262144
     max_chat_body: int = 48 * 1024 * 1024
+    max_upload_body: int = 65 * 1024 * 1024  # 64 MiB image plus multipart framing.
+    capacity_wait_seconds: float = 10
+    capacity_queue_size: int = 32
     timeout: float = 180
     stream_heartbeat_seconds: float = 15
     retention_days: int = 90

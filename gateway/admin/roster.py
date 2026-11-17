@@ -16,6 +16,7 @@ from ..models import (
 from ..operations import audit, operation
 from ..schemas import (
     Enroll,
+    MemberLimits,
     PasswordReset,
     StudentImport,
     StudentUpdate,
@@ -157,6 +158,8 @@ async def memberships(
                 "team": t.name,
                 "active": m.active,
                 "budget": m.budget,
+                "rpm": m.rpm,
+                "concurrency": m.concurrency,
                 "period": m.period,
                 "models": m.models,
                 "kind": s.kind,
@@ -167,6 +170,22 @@ async def memberships(
             for m, s, t in rows
         ]
         return {"rows": result, "total": total} if paginated else result
+
+
+@router.patch("/memberships/{member_id}/limits")
+async def member_limits(member_id: str, data: MemberLimits, request: Request):
+    async with request.app.state.db() as db, db.begin():
+        member = await db.get(Membership, member_id)
+        if not member or member.deleted_at:
+            fail(404, "member_not_found")
+        await db.scalar(select(Team).where(Team.id == member.team_id).with_for_update(key_share=True))
+        await db.refresh(member)
+        if member.deleted_at:
+            fail(404, "member_not_found")
+        before = {"rpm": member.rpm, "concurrency": member.concurrency}
+        member.rpm, member.concurrency = data.rpm, data.concurrency
+        audit(db, request, "member_limits_update", member.id, {"before": before, "after": data.model_dump()})
+        return {"id": member.id, **data.model_dump()}
 
 
 @router.get("/students")

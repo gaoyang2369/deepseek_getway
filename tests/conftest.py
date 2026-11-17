@@ -83,6 +83,7 @@ def settings():
             upstream_url="http://mock:8080/v1",
             admin_hash=PasswordHasher().hash(PASSWORD),
             timeout=0.5,
+            capacity_wait_seconds=0,
         )
     finally:
         with psycopg.connect(connection_url, autocommit=True) as conn:

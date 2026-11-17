@@ -85,8 +85,8 @@ class TeamCreate(Strict):
     models: Models
     budget: Amount = 0
     period: Literal["day", "month"] = "month"
-    rpm: int = Field(default=60, strict=True, ge=1, le=100000)
-    concurrency: int = Field(default=10, strict=True, ge=1, le=1000)
+    rpm: int = Field(default=0, strict=True, ge=0, le=100000)
+    concurrency: int = Field(default=0, strict=True, ge=0, le=1000)
     max_output: int = Field(default=2048, strict=True, ge=1, le=65536)
 
 
@@ -94,9 +94,14 @@ class TeamPatch(Strict):
     active: bool | None = None
     name: Name | None = None
     models: Models | None = None
-    rpm: int | None = Field(default=None, strict=True, ge=1, le=100000)
-    concurrency: int | None = Field(default=None, strict=True, ge=1, le=1000)
+    rpm: int | None = Field(default=None, strict=True, ge=0, le=100000)
+    concurrency: int | None = Field(default=None, strict=True, ge=0, le=1000)
     max_output: int | None = Field(default=None, strict=True, ge=1, le=65536)
+
+
+class MemberLimits(Strict):
+    rpm: int = Field(strict=True, ge=0, le=100000)
+    concurrency: int = Field(strict=True, ge=0, le=1000)
 
 
 class Enroll(Strict):
@@ -111,8 +116,8 @@ class Enroll(Strict):
     period: Literal["day", "month"] = "month"
     models: Models
     expires_at: datetime | None = None
-    rpm: int = Field(default=20, strict=True, ge=1, le=100000)
-    concurrency: int = Field(default=2, strict=True, ge=1, le=1000)
+    rpm: int = Field(default=0, strict=True, ge=0, le=100000)
+    concurrency: int = Field(default=0, strict=True, ge=0, le=1000)
 
     @field_validator("name", "student_number", "owner")
     @classmethod
@@ -216,8 +221,17 @@ class Message(Strict):
                     ):
                         raise ValueError("invalid image content block")
                     validate_image_url(image.get("url"))
+                elif part.get("type") == "file":
+                    if (
+                        info.data.get("role") == "assistant"
+                        or set(part) != {"type", "file_id"}
+                        or not isinstance(part.get("file_id"), str)
+                        or not part["file_id"].startswith("file-lab-")
+                        or len(part["file_id"]) > 64
+                    ):
+                        raise ValueError("use a file_id returned by this gateway")
                 else:
-                    raise ValueError("only text and image_url content blocks are enabled")
+                    raise ValueError("only text, image_url and file content blocks are enabled")
         return value
 
     @field_validator("tool_calls")
@@ -264,7 +278,7 @@ class Chat(Strict):
     @classmethod
     def image_count(cls, value):
         count = sum(
-            part.get("type") == "image_url"
+            part.get("type") in ("image_url", "file")
             for message in value
             if isinstance(message.content, list)
             for part in message.content

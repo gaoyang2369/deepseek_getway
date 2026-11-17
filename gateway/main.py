@@ -6,7 +6,7 @@ from cryptography.fernet import Fernet
 from redis.asyncio import Redis
 from sqlalchemy import func, select, text
 
-from . import admin, chat, student
+from . import admin, chat, files, student
 from .accounts import backfill_demo_accounts
 from .admission import AdmissionBatcher
 from .billing import recover
@@ -99,6 +99,7 @@ def create_app(settings=None):
         return {"status": "ready", "upstream": "not_probed"}
 
     app.include_router(chat.router)
+    app.include_router(files.router)
     app.include_router(admin.auth_router)
     app.include_router(admin.router)
     app.include_router(student.router)

@@ -379,6 +379,7 @@ async def metrics(request: Request):
             **request.app.state.metrics,
             "admission_batches": request.app.state.admission.stats,
             "admission_queue": request.app.state.admission.pending,
+            "capacity_queue": request.app.state.admission.capacity_waiters,
             "current_concurrency": current,
             "pending_requests": pending,
             # No reservation estimate exists; unknown cost is not a zero bill.

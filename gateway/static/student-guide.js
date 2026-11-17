@@ -110,6 +110,7 @@
     const powershell = `$env:LAB_LLM_BASE_URL = ${shellQuote(base).replaceAll("'\\''", "''")}\n$env:LAB_LLM_MODEL = ${shellQuote(model).replaceAll("'\\''", "''")}\n$secret = Read-Host '粘贴本组个人 Key' -AsSecureString\n$env:LAB_LLM_API_KEY = [System.Net.NetworkCredential]::new('', $secret).Password\nRemove-Variable secret`;
     const python = `import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    api_key=os.environ["LAB_LLM_API_KEY"],\n    base_url=os.environ["LAB_LLM_BASE_URL"],\n    max_retries=0,\n    timeout=180,\n)\nreply = client.chat.completions.create(\n    model=os.environ["LAB_LLM_MODEL"],\n    messages=[{"role": "user", "content": "你好，请用一句话介绍你能帮我做什么。"}],\n    max_tokens=${Math.min(output, 256)},\n    extra_body={"thinking": {"type": "disabled"}},\n)\nprint(reply.choices[0].message.content)`;
     const stream = `with client.chat.completions.create(\n    model=os.environ["LAB_LLM_MODEL"],\n    messages=[{"role": "user", "content": "解释什么是 API。"}],\n    max_tokens=${Math.min(output, 512)},\n    stream=True,\n    stream_options={"include_usage": True},\n    extra_body={"thinking": {"type": "disabled"}},\n) as chunks:\n    for chunk in chunks:\n        for choice in chunk.choices:\n            if choice.delta.content:\n                print(choice.delta.content, end="", flush=True)`;
+    const files = `# 先运行上面的 client 初始化；选择支持图片的 deepseek-flash。\nwith open("image.png", "rb") as f:\n    uploaded = client.files.create(file=f, purpose="user_data")\n\n# 后续多轮可重复使用 uploaded.id，无需重传 Base64。\nreply = client.chat.completions.create(\n    model=os.environ["LAB_LLM_MODEL"],\n    messages=[{"role": "user", "content": [\n        {"type": "text", "text": "请分析这张图片。"},\n        {"type": "file", "file_id": uploaded.id},\n    ]}],\n    max_tokens=${Math.min(output, 2048)},\n)\nprint(reply.choices[0].message.content)\n# 确认后续对话不再引用时再删除：client.files.delete(uploaded.id)`;
     const node = `import OpenAI from "openai";\n\nconst client = new OpenAI({\n  apiKey: process.env.LAB_LLM_API_KEY,\n  baseURL: process.env.LAB_LLM_BASE_URL,\n  maxRetries: 0,\n  timeout: 180_000,\n});\nconst reply = await client.chat.completions.create({\n  model: process.env.LAB_LLM_MODEL,\n  messages: [{ role: "user", content: "你好，请用一句话介绍你能帮我做什么。" }],\n  max_tokens: ${Math.min(output, 256)},\n  thinking: { type: "disabled" },\n});\nconsole.log(reply.choices[0].message.content);`;
     const harness = `# 合并到现有 llm-pi-ai 的 config.providers 下，保留其他提供商配置。\n- id: llm-pi-ai\n  config:\n    providers:\n      lab-gateway:\n        displayName: 实验室网关\n        api: openai-completions\n        baseURL: ${json(base)}\n        apiKeyEnv: LAB_LLM_API_KEY\n        reasoning: "off"\n        retryPolicy:\n          mode: normal\n          maxRetries: 0\n        compat:\n          supportsStore: false\n          supportsDeveloperRole: false\n          maxTokensField: max_tokens\n          supportsUsageInStreaming: true\n          thinkingFormat: deepseek\n          requiresReasoningContentOnAssistantMessages: true\n        models:\n          - id: ${json(model)}\n            input: ${["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].includes(model) ? "[text, image]" : "[text]"}\n            maxTokens: ${Math.min(output, 4096)}\n            reasoningEfforts:\n              "off": null\n              low: low\n              high: high`;
     const agent = `# 先执行本页 Python 示例中的 import 和 client 初始化，再运行此段。\nimport json\n\ntools = [{\n    "type": "function",\n    "function": {\n        "name": "get_project_status",\n        "description": "读取当前项目的状态",\n        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},\n    },\n}]\nmessages = [{"role": "user", "content": "请调用工具查询项目状态，然后告诉我结果。"}]\n\n# 每轮模型请求均单独计量；限制循环次数，避免 Agent 一直运行。\nfor step in range(4):\n    reply = client.chat.completions.create(\n        model=os.environ["LAB_LLM_MODEL"],\n        messages=messages, tools=tools,\n        max_tokens=${Math.min(output, 1024)},\n        extra_body={"thinking": {"type": "disabled"}},\n    )\n    message = reply.choices[0].message\n    if not message.tool_calls:\n        print(message.content)\n        break\n    messages.append({\n        "role": "assistant", "content": message.content,\n        "tool_calls": [{"id": t.id, "type": "function",\n                        "function": {"name": t.function.name, "arguments": t.function.arguments}}\n                       for t in message.tool_calls],\n    })\n    for tool in message.tool_calls:\n        if tool.function.name != "get_project_status":\n            raise ValueError("工具未注册")\n        result = {"status": "开发中", "next_step": "运行项目测试"}\n        messages.append({"role": "tool", "tool_call_id": tool.id,\n                         "content": json.dumps(result, ensure_ascii=False)})\nelse:\n    print("已达到 4 轮上限，请检查任务或工具结果。")`;
@@ -122,6 +123,7 @@
       powershell,
       python,
       stream,
+      files,
       node,
       harness,
       agent,
@@ -331,6 +333,11 @@
             paragraph("沿用上面的 client，替换请求部分："),
             code("Python 流式请求", sample.stream),
           ),
+          details(
+            "大图片或多轮复用：先上传，再引用",
+            paragraph("Flash 支持单张最大 64 MiB 的图片上传。后续只传 file_id，避免 Base64 反复撑大请求。文件属于当前成员及项目组，其他成员不可引用。"),
+            code("Python Files 上传与引用", sample.files),
+          ),
         );
       if (selectedTab === "node")
         content.append(
@@ -424,7 +431,7 @@
               "section-note",
             ),
             paragraph(
-              "文本、Flash 图片及函数工具可走此协议。此网关未开放 DeepSeek 官网额外的搜索、Files 上传和 Responses API。",
+              "文本、Flash 图片及函数工具可走此协议。此网关未开放 DeepSeek 官网额外的搜索、文档解析和 Responses API。",
               "section-note",
             ),
           ),
@@ -472,7 +479,7 @@
           "当前网关提供 GET /v1/models 和 POST /v1/chat/completions，支持文本、Flash 图片输入、SSE 流式输出及客户端 function 工具调用。OpenAI 兼容描述的是此接口格式，不代表使用 OpenAI 的模型或额度。",
         ),
         paragraph(
-          "图片通过 image_url 内容块传入，可用 HTTP(S) 链接或 Base64 data URL，请求体最多 48 MiB；32768 等项目组上限仅限制输出，不是上下文长度。当前不提供 /v1/responses、Anthropic Messages、Files 文件上传、Embeddings 和 DeepSeek 官方内置联网接口。模型名称以当前组和 Key 可访问的 /v1/models 为准。",
+          "图片可通过 image_url 传 URL/Base64，或通过 /v1/files 上传后用 file_id 引用。聊天请求体最多 48 MiB，单张上传图片最多 64 MiB；32768 等项目组上限仅限制输出，不是上下文长度。当前不提供 /v1/responses、Anthropic Messages、文档解析、Embeddings 和 DeepSeek 官方内置联网接口。模型名称以当前组和 Key 可访问的 /v1/models 为准。",
         ),
         mapping([
           [
@@ -483,14 +490,14 @@
           ["403", "模型未开放，或成员/项目组已停用；检查选中的组和模型。"],
           ["400 / model_does_not_support_images", "请使用支持图片的 deepseek-flash；deepseek-v4-pro 不支持图片。"],
           ["402", "个人或组已结算费用已达到预算；联系管理员或等待下一个预算周期。"],
-          ["429", "频率或并发已达上限；降低 Agent 并发并稍后重试。"],
+          ["429", "容量保护已触发；个人默认不单独限制，并发拥挤会先短暂排队。查看 error.details 中的当前值与上限，并按 Retry-After 稍后重试。"],
           [
             "404 / 405",
             "检查 /v1 是否重复，以及是否误选 Responses / Anthropic 协议。",
           ],
           [
             "413 / 422",
-            "413 表示请求体超过 48 MiB（包含 Base64 编码）；422 请查看 error.details 中的字段路径。支持 image_url 图片块；文件上传、音视频及 store: true 暂不支持。",
+            "413 表示请求体超过 48 MiB（包含 Base64 编码）；422 请查看 error.details 中的字段路径。可使用 Files 图片上传后引用。文档解析、音视频及 store: true 暂不支持。",
           ],
           [
             "502 / 503",

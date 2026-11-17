@@ -13,6 +13,18 @@ server {
         proxy_pass http://127.0.0.1:18081;
         include /etc/nginx/lab-gateway-headers.conf;
     }
+    location = /v1/files {
+        client_max_body_size 65m;
+        proxy_pass http://127.0.0.1:18081;
+        include /etc/nginx/lab-gateway-headers.conf;
+        proxy_request_buffering off;
+        proxy_read_timeout 240s;
+        proxy_send_timeout 240s;
+    }
+    location ^~ /v1/files/ {
+        proxy_pass http://127.0.0.1:18081;
+        include /etc/nginx/lab-gateway-headers.conf;
+    }
     location = /v1/chat/completions {
         client_max_body_size 48m;
         proxy_pass http://127.0.0.1:18081;

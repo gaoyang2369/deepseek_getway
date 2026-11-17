@@ -1,6 +1,6 @@
 # 实验室大模型 API 网关
 
-管理员配置项目组、上游凭证和双层预算；学生首次登录改密后领取个人 Key，公共脚本使用服务身份 Key。支持 `/v1/models`、文本及 Flash 图片 Chat Completions、SSE 和客户端函数工具，聊天请求体最多 48 MiB。预算在请求前检查已结算费用，不预留资金，进行中请求可能造成超支。技术栈为 FastAPI、OpenAI Python SDK（连接 DeepSeek）、PostgreSQL 权威账本与 Redis 限流，单进程运行。
+管理员配置项目组、上游凭证和双层预算；学生首次登录改密后领取个人 Key，公共脚本使用服务身份 Key。支持 `/v1/models`、文本及 Flash 图片 Chat Completions、SSE 和客户端函数工具，聊天请求体最多 48 MiB；可通过 `/v1/files` 上传最多 64 MiB 的图片并复用文件引用。个人并发和请求频率默认不限制，容量保护可选，并发满载时短暂排队。预算在请求前检查已结算费用，不预留资金，进行中请求可能造成超支。技术栈为 FastAPI、OpenAI Python SDK（连接 DeepSeek）、PostgreSQL 权威账本与 Redis 限流，单进程运行。
 
 ## 文档入口
 

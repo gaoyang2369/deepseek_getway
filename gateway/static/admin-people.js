@@ -58,8 +58,8 @@ export async function teamsView(cache, load) {
               ["month", "自然月"],
               ["day", "自然日"],
             ]),
-            field("每分钟请求数", "rpm", "number", "60"),
-            field("最大并发", "concurrency", "number", "10"),
+            field("每分钟请求数（0＝不限制）", "rpm", "number", "0"),
+            field("最大并发（0＝不限制）", "concurrency", "number", "0"),
             field(
               "单次输出 Token 上限（不是上下文长度）",
               "max_output",
@@ -102,7 +102,7 @@ export async function teamsView(cache, load) {
         ),
         badge(t.active),
         t.models.join(", "),
-        t.rpm + " / " + t.concurrency,
+        (t.rpm || "不限") + " / " + (t.concurrency || "不限"),
         actions(
           button("查看消费", () => {
             setReportFilters({ ...bounds("month"), team_id: t.id }, "month");
@@ -120,8 +120,8 @@ export async function teamsView(cache, load) {
                     "text",
                     t.models.join(","),
                   ),
-                  field("每分钟请求数", "rpm", "number", t.rpm),
-                  field("最大并发", "concurrency", "number", t.concurrency),
+                  field("每分钟请求数（0＝不限制）", "rpm", "number", t.rpm),
+                  field("最大并发（0＝不限制）", "concurrency", "number", t.concurrency),
                   field(
                     "单次输出 Token 上限",
                     "max_output",
@@ -344,6 +344,7 @@ async function memberDetail(p, cache, load, keyPage = { offset: 0, size: 10 }) {
         "个人额度 " + money(m.budget).slice(1) + " " + periodUnit(m.period),
       ),
       node("p", "允许模型：" + m.models.join("、"), "section-note"),
+      node("p", "个人容量保护：每分钟 " + (m.rpm || "不单独限制") + "；并发 " + (m.concurrency || "不单独限制"), "section-note"),
     );
     const budget = budgets.find((b) => b.owner_id === m.id);
     if (budget)
@@ -364,6 +365,18 @@ async function memberDetail(p, cache, load, keyPage = { offset: 0, size: 10 }) {
             ? [button("签发服务 Key", () => keyForm(m, refresh))]
             : []),
           moreActions(
+            button("容量保护（可选）", () => openForm(
+              "个人容量保护",
+              [
+                node("p", "默认 0，不单独限制个人；项目组容量保护仍生效。预算按费用独立检查。", "section-note"),
+                field("每分钟请求数（0＝不单独限制）", "rpm", "number", m.rpm),
+                field("最大并发（0＝不单独限制）", "concurrency", "number", m.concurrency),
+              ],
+              async (d) => {
+                await api("/memberships/" + m.id + "/limits", "PATCH", {rpm: +d.rpm, concurrency: +d.concurrency});
+                await refresh();
+              },
+            )),
             button(
               "关闭成员关系",
               async () => {

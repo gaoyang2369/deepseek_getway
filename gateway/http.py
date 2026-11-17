@@ -56,7 +56,7 @@ class Guard:
         async def safe_send(message):
             if message["type"] == "http.response.start":
                 if (
-                    scope["path"] == "/v1/chat/completions"
+                    scope["path"] in ("/v1/chat/completions", "/v1/files")
                     and scope["method"] == "POST"
                     and message["status"] >= 400
                     and not scope["state"].get("admitted")
@@ -79,6 +79,37 @@ class Guard:
             await send(message)
 
         if scope["method"] in ("POST", "PATCH", "PUT"):
+
+            def oversized(received, limit):
+                details = {
+                    "limit_type": "request_body_bytes",
+                    "received_bytes": received,
+                    "limit_bytes": limit,
+                    "path": scope["path"],
+                }
+                scope["state"]["rejection_reason"] = "request_too_large"
+                scope["state"]["rejection_details"] = details
+                return {
+                    "message": "request_too_large",
+                    "type": "gateway_error",
+                    "request_id": request_id,
+                    "details": details,
+                }
+
+            if scope["path"] == "/v1/files":
+                received = 0
+
+                async def upload_receive():
+                    nonlocal received
+                    message = await receive()
+                    received += len(message.get("body", b""))
+                    if received > self.settings.max_upload_body:
+                        raise HTTPException(413, detail=oversized(received, self.settings.max_upload_body))
+                    return message
+
+                # Multipart parsing spools to /tmp; do not make an extra 64 MiB
+                # in-memory copy. Authentication runs before the form is parsed.
+                return await self.app(scope, upload_receive, safe_send)
             limit = (
                 self.settings.max_chat_body
                 if scope["path"] == "/v1/chat/completions"
@@ -91,15 +122,8 @@ class Guard:
                     return
                 body.extend(msg.get("body", b""))
                 if len(body) > limit:
-                    scope["state"]["rejection_reason"] = "request_too_large"
                     return await JSONResponse(
-                        {
-                            "error": {
-                                "message": "request_too_large",
-                                "type": "gateway_error",
-                                "request_id": request_id,
-                            }
-                        },
+                        {"error": oversized(len(body), limit)},
                         413,
                     )(scope, receive, safe_send)
                 if not msg.get("more_body"):
@@ -125,10 +149,14 @@ def install_error_handlers(app, settings, factory):
         payload = {"message": message, "type": "gateway_error", "request_id": request.state.request_id}
         if details is not None:
             payload["details"] = details
+            request.state.rejection_details = details
         return JSONResponse(
             {"error": payload},
             status,
-            headers={"X-Request-ID": request.state.request_id},
+            headers={
+                "X-Request-ID": request.state.request_id,
+                **({"Retry-After": "60" if message == "rate_limit" else "1"} if status == 429 else {}),
+            },
         )
 
     @app.exception_handler(HTTPException)
@@ -187,7 +215,7 @@ def install_error_handlers(app, settings, factory):
         response = error(request, 500, "internal_error")
         # Starlette's generic 500 handler sits outside Guard's response wrapper.
         if (
-            request.url.path == "/v1/chat/completions"
+            request.url.path in ("/v1/chat/completions", "/v1/files")
             and request.method == "POST"
             and not getattr(request.state, "admitted", False)
         ):

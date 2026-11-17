@@ -131,3 +131,14 @@ Harness 回归使用独立安装的客户端依赖，不加入网关运行依赖
 npm install --prefix /tmp/harness-client-check --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@1.3.0
 PI_AI_TEST_ROOT=/tmp/harness-client-check .venv/bin/python scripts/local.py .venv/bin/pytest -q
 ```
+
+
+## 可选容量保护和图片文件升级
+
+`e91c24d8b630` 将成员旧默认 RPM=20、并发=2 分别改为 0；非默认自定义值保留，已有组配置和预算、费用、Key 均保持。0 表示关闭该层容量限制。升级须停止旧进程后运行迁移再启动新版，避免旧准入函数把 0 当成全部拒绝。回滚会把 0 恢复为旧默认值，并移除 Files 归属表；已上传的上游文件不会随数据库回滚自动删除，回滚前应导出归属记录并安排清理。
+
+新增 `uploaded_files` 元数据表（没有图片原文）和拒绝记录 `details` 字段，应纳入现有备份。上传只开放图片 `purpose=user_data`，不会开启收费文档解析；模型引用依旧按官方 usage 和已配置价格结算。文件永久保存或按调用者指定期限过期；删除走原上传凭证，项目组换凭证后引用需重传。
+
+反向代理除聊天 48 MiB 外，还须放行 `/v1/files`（上传体 65 MiB）和 `/v1/files/{id}`；示例配置已同步。服务使用临时文件处理 multipart，需保证 `/tmp` 容量；不在日志记录请求体、图片、密钥或上游原始错误。`file_cleanup_failed` 表示上传成功后的本地保存失败，且自动清理也未成功，应核查上游文件列表。
+
+`capacity_queue` 指标为正在等待容量的请求数；`current_concurrency` 是已经准入的模型请求数。当前 HTTP 连接池最多 200 条连接，保留现有组容量保护，不能把上游额度直接当作本机承载能力。扩大组并发前应在隔离环境压测。

@@ -58,12 +58,12 @@ class Team(Base):
     budget: Mapped[int] = mapped_column(BigInteger, default=0)
     period: Mapped[str] = mapped_column(String(8), default="month")
     policy_version: Mapped[int] = mapped_column(Integer, default=1)
-    rpm: Mapped[int] = mapped_column(Integer, default=60)
-    concurrency: Mapped[int] = mapped_column(Integer, default=10)
+    rpm: Mapped[int] = mapped_column(Integer, default=0)
+    concurrency: Mapped[int] = mapped_column(Integer, default=0)
     max_output: Mapped[int] = mapped_column(Integer, default=2048)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
-        CheckConstraint("budget >= 0 AND rpm > 0 AND concurrency > 0 AND max_output > 0"),
+        CheckConstraint("budget >= 0 AND rpm >= 0 AND concurrency >= 0 AND max_output > 0"),
         Index("teams_live_code", "code", unique=True, postgresql_where=text("deleted_at IS NULL")),
     )
 
@@ -88,8 +88,8 @@ class Membership(Base):
     budget: Mapped[int] = mapped_column(BigInteger, default=0)
     period: Mapped[str] = mapped_column(String(8), default="month")
     policy_version: Mapped[int] = mapped_column(Integer, default=1)
-    rpm: Mapped[int] = mapped_column(Integer, default=20)
-    concurrency: Mapped[int] = mapped_column(Integer, default=2)
+    rpm: Mapped[int] = mapped_column(Integer, default=0)
+    concurrency: Mapped[int] = mapped_column(Integer, default=0)
     models: Mapped[list] = mapped_column(JSONB, default=list)
     key_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -101,7 +101,7 @@ class Membership(Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        CheckConstraint("budget >= 0 AND rpm > 0 AND concurrency > 0"),
+        CheckConstraint("budget >= 0 AND rpm >= 0 AND concurrency >= 0"),
     )
 
 
@@ -228,6 +228,7 @@ class Rejection(Base):
     reason: Mapped[str] = mapped_column(String(64))
     http_status: Mapped[int] = mapped_column(Integer)
     limit_scope: Mapped[str | None] = mapped_column(String(24))
+    details: Mapped[dict | None] = mapped_column(JSONB)
     ip: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
 
@@ -281,3 +282,16 @@ class Operation(Base):
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
     fingerprint: Mapped[str] = mapped_column(String(64))
     result: Mapped[dict] = mapped_column(JSONB)
+
+
+class UploadedFile(Base):
+    __tablename__ = "uploaded_files"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    membership_id: Mapped[str] = mapped_column(ForeignKey("memberships.id"), index=True)
+    credential_id: Mapped[str] = mapped_column(ForeignKey("credentials.id"))
+    upstream_id: Mapped[str] = mapped_column(String(128))
+    filename: Mapped[str] = mapped_column(String(512))
+    size: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -20,7 +20,7 @@ Key 仅在领取或轮换成功时完整显示一次。保存后可以退出网�
 | 模型 ID | 当前项目组允许的模型，或用该 Key 查询 `/v1/models` 得到的 ID |
 | 完整聊天地址 | Base URL 后追加 `/chat/completions` |
 
-SDK 的 `base_url` / `baseURL` 填到 `/v1` 即可，不要再追加 `/chat/completions`。本网关支持文本、Flash 的 `image_url` 图片、SSE 流式和客户端 `function` 工具调用；目前不提供 OpenAI Responses、Anthropic Messages、Files 文件上传、Embeddings 和 DeepSeek 官方内置联网接口。不要把上游官网的全部功能当成本网关的功能。
+SDK 的 `base_url` / `baseURL` 填到 `/v1` 即可，不要再追加 `/chat/completions`。本网关支持文本、Flash 的 `image_url` 图片、SSE 流式和客户端 `function` 工具调用；目前不提供 OpenAI Responses、Anthropic Messages、文档解析、Embeddings 和 DeepSeek 官方内置联网接口。不要把上游官网的全部功能当成本网关的功能。
 
 DeepSeek 官方的 [首次调用说明](https://api-docs.deepseek.com/zh-cn/) 提供 OpenAI 格式示例；以下示例已按本网关接口范围改写。核对日期：2026-11-14。
 
@@ -123,7 +123,34 @@ reply = client.chat.completions.create(
 print(reply.choices[0].message.content)
 ```
 
-也可把 `url` 换成上游可访问的 HTTP(S) 图片链接。支持 JPEG、PNG、GIF、WebP，单张图片最多 32 MiB，单次最多 600 张；`detail` 可为 `auto/low/high/original`。图片可以出现在 user、system、tool 消息中，不能放在 assistant 中。图片尺寸、真实格式等由上游校验，网关不会自行下载 URL。`deepseek-v4-pro` 不支持图片，会返回 `400 model_does_not_support_images`。本轮未开放 Files 上传及 `file_id` 引用。能力依据 [官方图像理解指南](https://api-docs.deepseek.com/zh-cn/guides/vision/)（2026-11-17 核对）。
+也可把 `url` 换成上游可访问的 HTTP(S) 图片链接。支持 JPEG、PNG、GIF、WebP，单张图片最多 32 MiB，单次最多 600 张；`detail` 可为 `auto/low/high/original`。图片可以出现在 user、system、tool 消息中，不能放在 assistant 中。图片尺寸、真实格式等由上游校验，网关不会自行下载 URL。`deepseek-v4-pro` 不支持图片，会返回 `400 model_does_not_support_images`。支持通过 `/v1/files` 上传图片并使用 `file_id` 引用，见下方示例。能力依据 [官方图像理解指南](https://api-docs.deepseek.com/zh-cn/guides/vision/)（2026-11-17 核对）。
+
+## 图片上传后复用（推荐用于大图片和 Agent 多轮对话）
+
+使用同一个网关地址和个人 Key，选择 `deepseek-flash`：
+
+```python
+with open('image.png', 'rb') as f:
+    uploaded = client.files.create(file=f, purpose='user_data')
+
+reply = client.chat.completions.create(
+    model='deepseek-flash',
+    messages=[{'role': 'user', 'content': [
+        {'type': 'text', 'text': '请分析这张图片。'},
+        {'type': 'file', 'file_id': uploaded.id},
+    ]}],
+    max_tokens=2048,
+)
+print(reply.choices[0].message.content)
+# 多轮复用 uploaded.id；不再使用后再删除：
+# client.files.delete(uploaded.id)
+```
+
+支持 `client.files.list()`、`retrieve(id)` 和 `delete(id)`。单张上传图片最多 **64 MiB**；上传请求体为 **65 MiB**（包含 multipart 格式开销），聊天请求仍为 **48 MiB**。支持 JPEG、PNG、GIF、WebP，`purpose` 必须为 `user_data`，本轮不提供文档解析或下载文件内容。图片原文暂存在上传流程的临时文件中，不存入数据库；文件保存在当前项目组的官方上游账号中，网关只保存归属、文件 ID、名称、大小和时间等元数据。
+
+返回的 `file-lab-...` ID 仅属于当前成员在当前项目组的身份；同一成员换个人 Key 后仍可复用，其他成员不能查询、删除或引用。不要直接传官方 `file-api-...` ID。项目组更换官方凭证后，旧文件引用会提示 `file_credential_changed_reupload`，需重新上传。未设置有效期时跟随官方永久有效；可按官方方式通过 `expires_after` 指定 1 小时至 30 天的有效期，过期引用返回 410。丢失上传响应时先查询列表，不要无限自动重传。
+
+个人并发和每分钟请求数默认不单独限制；项目组容量保护或管理员明确启用的个人保护仍生效。并发满载时最多排队 10 秒，全实例最多 32 个容量等待请求；预算和身份在真正准入时重新检查。排队超时或队列已满返回 429，包含 `Retry-After` 和限制详情，不产生模型费用。
 
 ## Node.js
 
@@ -210,7 +237,7 @@ console.log(reply.choices[0].message.content);
 
 可选兼容项依据 Harness 的 [配置字段参考](https://deepseek-harness.github.io/deepseek-harness/en/reference/config-catalog)：`supportsStore: false`、`supportsDeveloperRole: false` 和 `maxTokensField: max_tokens` 可减少转换；`thinkingFormat: deepseek` 对接思考开关。推理等级支持 `none / low / high / max`，并依据 [DeepSeek 官方参数说明](https://api-docs.deepseek.com/api/create-chat-completion/) 将 `minimal` 映射到 `low`、`medium / xhigh` 映射到 `high`。项目组原有输出上限不变。
 
-本地文件、终端、函数工具与模型请求是不同环节。此网关可承载文本、image_url 图片及函数调用请求，但未开放 DeepSeek 官网额外的 Files 上传、联网和 Responses API。不要直接按默认官网能力开启这些功能。
+本地文件、终端、函数工具与模型请求是不同环节。此网关可承载文本、image_url 图片、Files 图片引用及函数调用请求，但未开放 DeepSeek 官网额外的文档解析、联网和 Responses API。不要直接按默认官网能力开启这些功能。
 
 验证范围：Python、HTTP 与工具调用可用模拟上游验证；Node.js 示例做语法检查；Harness 配置按官方字段和本网关协议适配，尚未完成 Harness 完整应用的端到端验收。
 
@@ -226,7 +253,7 @@ console.log(reply.choices[0].message.content);
 | 402 | 组或个人已结算费用已达到预算，联系管理员或等待下一预算周期 |
 | 429 | 降低请求频率和并发，等待后再试 |
 | 404 / 405 | 检查是否重复 `/v1`，是否误用 Responses / Anthropic 模式 |
-| 413 / 422 | 413 表示请求体超过 48 MiB（含 Base64 编码）；422 查看 `error.details` 中的字段路径与固定错误码。未知参数、`store: true`、文件引用和音视频仍会被拒绝 |
+| 413 / 422 | 413 表示输入体积超限：聊天 JSON 最多 48 MiB（含 Base64），Files 单张图片最多 64 MiB、上传请求最多 65 MiB。错误详情提供实际已接收量与上限；大图片可先上传再传文件引用。422 查看固定错误码及 `error.details` 字段路径。未知参数、`store: true`、文档解析和音视频仍会被拒绝 |
 | 502 / 503 | 保留 `X-Request-ID` 联系管理员，避免无条件重复请求 |
 
 本机示例使用环境变量保存 Key，页面复制的配置中不会包含真实 Key。不要把个人 Key 写进项目仓库或公开日志。客户端断开或超时不代表上游没有执行，缺少最终 usage 的请求可能进入待核对。

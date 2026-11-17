@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .admission import admit
 from .billing import parse_usage, settle
+from .files import resolve_references
 from .keys import authenticate
 from .models import Price, now
 from .schemas import Chat
@@ -117,19 +118,26 @@ async def chat(data: Chat, request: Request):
         client_ip(request, settings),
         started,
         request.state,
+        request=request,
     )
 
     async def finish_call(**kwargs):
         await finish_safely(app, call.id, team_id=call.team_id, admission_ms=call.admission_ms, **kwargs)
 
     if upstream_model == "deepseek-v4-pro" and any(
-        part.get("type") == "image_url"
+        part.get("type") in ("image_url", "file")
         for message in body["messages"]
         if isinstance(message.get("content"), list)
         for part in message["content"]
     ):
         await finish_call(manual_cost=0, reason="not_sent")
         fail(400, "model_does_not_support_images")
+
+    try:
+        await resolve_references(app, call, body)
+    except (Exception, asyncio.CancelledError):
+        await finish_call(manual_cost=0, reason="not_sent")
+        raise
 
     try:
         upstream_key = app.state.cipher.decrypt(encrypted.encode()).decode()
